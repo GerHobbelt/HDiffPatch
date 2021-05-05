@@ -9,7 +9,7 @@
 
 a C\C++ library and command-line tools for Diff & Patch between binary files or directories(folder); cross-platform; run fast; create small delta/differential; support large files and limit memory requires when diff & patch.   
    
-( NOTE: This library does not deal with file metadata, such as file last wirte time, permissions, link file, etc... To this library, a file is just as a stream of bytes; You can extend this library or use other tools. )   
+( NOTE: This library does not deal with file metadata, such as file last write time, permissions, link file, etc... To this library, a file is just as a stream of bytes; You can extend this library or use other tools. )   
 ( update Android Apk? Jar or Zip file diff & patch? try [ApkDiffPatch](https://github.com/sisong/ApkDiffPatch)!    
  but ApkDiffPath can't be used in the Android app store, because it requires re-signing apk;   
 [sfpatcher](https://github.com/sisong/sfpatcher) like [archive-patcher](https://github.com/google/archive-patcher), is designed for Android app store, but patch is much faster than archive-patcher. )   
