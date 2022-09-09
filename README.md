@@ -1,10 +1,10 @@
 # [HDiffPatch](https://github.com/sisong/HDiffPatch)
-[![release](https://img.shields.io/badge/release-v4.1.0-blue.svg)](https://github.com/sisong/HDiffPatch/releases) 
+[![release](https://img.shields.io/badge/release-v4.1.2-blue.svg)](https://github.com/sisong/HDiffPatch/releases) 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sisong/HDiffPatch/blob/master/LICENSE) 
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue.svg)](https://github.com/sisong/HDiffPatch/pulls)
 [![+issue Welcome](https://img.shields.io/github/issues-raw/sisong/HDiffPatch?color=green&label=%2Bissue%20welcome)](https://github.com/sisong/HDiffPatch/issues)   
 
-[![Build Status](https://travis-ci.org/sisong/HDiffPatch.svg?branch=master)](https://travis-ci.org/sisong/HDiffPatch) 
+[![Build Status](https://github.com/sisong/HDiffPatch/workflows/ci/badge.svg?branch=master)](https://github.com/sisong/HDiffPatch/actions?query=workflow%3Aci+branch%3Amaster)
 [![Build status](https://ci.appveyor.com/api/projects/status/t9ow8dft8lt898cv/branch/master?svg=true)](https://ci.appveyor.com/project/sisong/hdiffpatch/branch/master)   
 
 a C\C++ library and command-line tools for Diff & Patch between binary files or directories(folder); cross-platform; run fast; create small delta/differential; support large files and limit memory requires when diff & patch.   
@@ -12,7 +12,7 @@ a C\C++ library and command-line tools for Diff & Patch between binary files or 
 ( NOTE: This library does not deal with file metadata, such as file last write time, permissions, link file, etc... To this library, a file is just as a stream of bytes; You can extend this library or use other tools. )   
 ( update Android Apk? Jar or Zip file diff & patch? try [ApkDiffPatch](https://github.com/sisong/ApkDiffPatch)!    
  but ApkDiffPath can't be used in the Android app store, because it requires re-signing apk;   
-[sfpatcher](https://github.com/sisong/sfpatcher) like [archive-patcher](https://github.com/google/archive-patcher), is designed for Android app store, but patch is much faster than archive-patcher. )   
+[sfpatcher](https://github.com/sisong/sfpatcher) (like [archive-patcher](https://github.com/google/archive-patcher)), is designed for Android app store, but patch is much faster than archive-patcher. )   
    
 ---
 ## Releases/Binaries
@@ -40,13 +40,17 @@ $ git clone https://github.com/sisong/zlib.git   ../zlib
 $ git clone https://github.com/sisong/bzip2.git  ../bzip2
 ```
    
-build libhpatchz.so for android:   
+build libhpatchz.so for Android:   
 * install Android NDK
 * `$ cd <dir>/HDiffPatch/builds/android_ndk_jni_mk`
-* `$ build_libs.sh`   (or `$ build_libs.bat`, then got \*.so files)
+* `$ build_libs.sh`  (or `$ build_libs.bat` on windows, then got \*.so files)
 * import file `com/github/sisong/HPatch.java` (from `HDiffPatch/builds/android_ndk_jni_mk/java/`) & .so files, java code can call the patch function in libhpatchz.so
    
-## diff command line usage:   
+
+---
+## command line usage Chinese version: [命令行使用说明中文版](README_cmdline_cn.md)
+   
+## **diff** command line usage:   
 diff     usage: **hdiffz** [options] **oldPath newPath outDiffFile**   
 compress usage: **hdiffz** [-c-...]  **"" newPath outDiffFile**   
 test    usage: **hdiffz**    -t     **oldPath newPath testDiffFile**   
@@ -158,7 +162,7 @@ special options:
   -v  output Version info.
 ```
    
-## patch command line usage:   
+## **patch** command line usage:   
 patch usage: **hpatchz** [options] **oldPath diffFile outNewPath**   
 uncompress usage: **hpatchz** [options] **"" diffFile outNewPath**   
 create  SFX: **hpatchz** [-X-exe#selfExecuteFile] **diffFile -X#outSelfExtractArchive**   
@@ -298,8 +302,7 @@ case list:
 |hdiffz -s -zstd|6.82%|73|24.1|13|20|464.0|
    
 
----
-## Test With Apk Files: 
+## input Apk Files for test: 
 case list:
 | |newFile <-- oldFile|newSize|oldSize|
 |----:|:----|----:|----:|
