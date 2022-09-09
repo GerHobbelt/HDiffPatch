@@ -1,5 +1,5 @@
 # [HDiffPatch](https://github.com/sisong/HDiffPatch)
-[![release](https://img.shields.io/badge/release-v4.2.1-blue.svg)](https://github.com/sisong/HDiffPatch/releases) 
+[![release](https://img.shields.io/badge/release-v4.2.2-blue.svg)](https://github.com/sisong/HDiffPatch/releases) 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sisong/HDiffPatch/blob/master/LICENSE) 
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue.svg)](https://github.com/sisong/HDiffPatch/pulls)
 [![+issue Welcome](https://img.shields.io/github/issues-raw/sisong/HDiffPatch?color=green&label=%2Bissue%20welcome)](https://github.com/sisong/HDiffPatch/issues)   
@@ -9,10 +9,11 @@
 
 a C\C++ library and command-line tools for Diff & Patch between binary files or directories(folder); cross-platform; run fast; create small delta/differential; support large files and limit memory requires when diff & patch.   
    
-( NOTE: This library does not deal with file metadata, such as file last write time, permissions, link file, etc... To this library, a file is just as a stream of bytes; You can extend this library or use other tools. )   
-( update Android Apk? Jar or Zip file diff & patch? try [ApkDiffPatch](https://github.com/sisong/ApkDiffPatch)!    
- but ApkDiffPath can't be used in the Android app store, because it requires re-signing apk;   
-[sfpatcher](https://github.com/sisong/sfpatcher) (like [archive-patcher](https://github.com/google/archive-patcher)), is designed for Android app store, but patch is much faster than archive-patcher. )   
+( NOTE: This library does not deal with file metadata, such as file last wirte time, permissions, link file, etc... To this library, a file is just as a stream of bytes; You can extend this library or use other tools. )   
+( if need patch (OTA) on embedded systems,MCU,NB-IoT..., see demo [HPatchLite](https://github.com/sisong/HPatchLite) )   
+( update your own Android Apk? Jar or Zip file diff & patch? try [ApkDiffPatch](https://github.com/sisong/ApkDiffPatch)! )   
+( ApkDiffPath can't be used by Android app store, because it requires re-signing apks;   
+[sfpatcher](https://github.com/sisong/sfpatcher) (like [archive-patcher](https://github.com/google/archive-patcher)) not require re-signing apks, is designed for Android app store, patch is much faster than archive-patcher & run with O(1) memory. )   
    
 ---
 ## Releases/Binaries
@@ -252,11 +253,15 @@ all **diff**&**patch** function in file: `libHDiffPatch/HDiff/diff.h` & `libHDif
 * **patch_single_stream()**
 * **patch_single_stream_mem()**
 * **patch_single_compressed_diff()**
-* **patch_single_stream_diff()**   
- v4.1 API, bsdiff wrapper:   
+* **patch_single_stream_diff()**
+#### v4.1 API, bsdiff wrapper:
 * **create_bsdiff()**
 * **bspatch_with_cache()**
-
+#### v4.2 API, optimized hpatch on MCU,NB-IoT... (demo [HPatchLite](https://github.com/sisong/HPatchLite)): 
+* **create_lite_diff()**
+* **hpatch_lite_open()**
+* **hpatch_lite_patch()**
+   
 ---
 ## HDiffPatch vs BsDiff & xdelta:
 case list:
@@ -351,6 +356,7 @@ case list:
 **hdiffz** added diff with `-m-1 -cache -SD -block -d -f -p-1 {old} {new} {pat}`   
 **hdiffz -s** added diff with `-s-16 -SD -d -f -p-1 {old} {new} {pat}`   
 **sfpatcher -1 -zstd** diff with `-o-1 -c-zstd-21-24 -p-1 -block -cache -d {old} {new} {pat}`, patch with `-lp -p-8 {old} {pat} {new}`   
+**sfpatcher -3 -lzma2** diff with `-o-3 -c-lzma2-9-8m -lp-8m -p-1 -block -cache -d {old} {new} {pat}`, patch with `-lp -p-8 {old} {pat} {new}`   
 ( [sfpatcher](https://github.com/sisong/sfpatcher) optimized diff&patch between apk files )  
 
 **test result average**:
@@ -370,6 +376,7 @@ case list:
 |hdiffz -s -lzma2 |59.02%|210|5.5|20|20|268.4|
 |hdiffz -s -zstd|59.26%|139|8.6|20|20|619.2|
 |sfpatcher -1 -zstd|31.70%|773|2.7|24|29|399.8|
+|sfpatcher -3 -lzma2|23.77%|976|2.1|27|33|65.3|
 
 ---
 ## Contact
