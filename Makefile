@@ -1,13 +1,22 @@
 # args
 DIR_DIFF := 1
 MT       := 1
+# 0: not need zlib;  1: compile zlib source code;  2: used -lz to link zlib lib;
+ZLIB     := 2
 LZMA     := 1
+ARM64ASM := 0
+# 0: not need zstd;  1: compile zstd source code;  2: used -lzstd to link zstd lib;
 ZSTD     := 1
 MD5      := 1
+STATIC_CPP := 0
 # used clang?
-CL  	 := 0	
+CL  	 := 0
+# build with -m32?
+M32      := 0
+# build for out min size
+MINS     := 0
 # support bsdiff&bspatch?
-BSD      := 1	
+BSD      := 1
 ifeq ($(OS),Windows_NT) # mingw?
   CC    := gcc
   BZIP2 := 1
@@ -55,6 +64,10 @@ ifeq ($(LZMA),0)
 else # https://www.7-zip.org  https://github.com/sisong/lzma
   HPATCH_OBJ += $(LZMA_PATH)/LzmaDec.o \
   				$(LZMA_PATH)/Lzma2Dec.o 
+  ifeq ($(ARM64ASM),0)
+  else
+  	HPATCH_OBJ += $(LZMA_PATH)/../Asm/arm64/LzmaDecOpt.o
+  endif
   HDIFF_OBJ  += $(LZMA_PATH)/LzFind.o \
   				$(LZMA_PATH)/LzFindOpt.o \
   				$(LZMA_PATH)/CpuArch.o \
@@ -69,8 +82,7 @@ else # https://www.7-zip.org  https://github.com/sisong/lzma
   endif
 endif
 ZSTD_PATH := ../zstd/lib
-ifeq ($(ZSTD),0)
-else # https://github.com/facebook/zstd
+ifeq ($(ZSTD),1) # https://github.com/facebook/zstd
   HPATCH_OBJ += $(ZSTD_PATH)/common/debug.o \
   				$(ZSTD_PATH)/common/entropy_common.o \
   				$(ZSTD_PATH)/common/error_private.o \
@@ -101,7 +113,7 @@ else # https://github.com/facebook/zstd
   endif
 endif
 BZ2_PATH := ../bzip2
-ifeq ($(BZIP2),1) # https://github.com/sisong/bzip2
+ifeq ($(BZIP2),1) # http://www.bzip.org  https://github.com/sisong/bzip2
   HPATCH_OBJ += $(BZ2_PATH)/blocksort.o \
   				$(BZ2_PATH)/bzlib.o \
   				$(BZ2_PATH)/compress.o \
@@ -110,9 +122,24 @@ ifeq ($(BZIP2),1) # https://github.com/sisong/bzip2
   				$(BZ2_PATH)/huffman.o \
   				$(BZ2_PATH)/randtable.o
 endif
+ZLIB_PATH := ../zlib
+ifeq ($(ZLIB),1) # http://zlib.net  https://github.com/sisong/zlib  
+  HPATCH_OBJ += $(ZLIB_PATH)/adler32.o \
+  				$(ZLIB_PATH)/crc32.o \
+  				$(ZLIB_PATH)/inffast.o \
+  				$(ZLIB_PATH)/inflate.o \
+  				$(ZLIB_PATH)/inftrees.o \
+  				$(ZLIB_PATH)/trees.o \
+  				$(ZLIB_PATH)/zutil.o
+  HDIFF_OBJ +=  $(ZLIB_PATH)/compress.o \
+  				$(ZLIB_PATH)/deflate.o \
+  				$(ZLIB_PATH)/infback.o \
+  				$(ZLIB_PATH)/uncompr.o
+endif
 
 HDIFF_OBJ += \
     hdiffz_import_patch.o \
+    libHDiffPatch/HPatchLite/hpatch_lite.o \
     libHDiffPatch/HDiff/diff.o \
     libHDiffPatch/HDiff/match_block.o \
     libHDiffPatch/HDiff/private_diff/bytes_rle.o \
@@ -151,9 +178,23 @@ DEF_FLAGS := \
     -O3 -DNDEBUG -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 \
     -D_IS_NEED_ALL_CompressPlugin=0 \
     -D_IS_NEED_DEFAULT_CompressPlugin=0 \
-    -D_CompressPlugin_zlib  \
     -D_IS_NEED_ALL_ChecksumPlugin=0 \
     -D_IS_NEED_DEFAULT_ChecksumPlugin=0 
+ifeq ($(M32),0)
+else
+  DEF_FLAGS += -m32
+endif
+ifeq ($(MINS),0)
+else
+  DEF_FLAGS += \
+    -s \
+    -Wno-error=format-security \
+    -fvisibility=hidden  \
+    -ffunction-sections -fdata-sections \
+    -ffat-lto-objects -flto
+  CXXFLAGS += -fvisibility-inlines-hidden
+endif
+
 ifeq ($(BZIP2),0)
 else
     DEF_FLAGS += -D_CompressPlugin_bz2
@@ -161,13 +202,23 @@ else
         DEF_FLAGS += -I$(BZ2_PATH)
 	endif
 endif
+ifeq ($(ZLIB),0)
+else
+    DEF_FLAGS += -D_CompressPlugin_zlib
+	ifeq ($(ZLIB),1)
+        DEF_FLAGS += -I$(ZLIB_PATH)
+	endif
+endif
 ifeq ($(DIR_DIFF),0)
   DEF_FLAGS += -D_IS_NEED_DIR_DIFF_PATCH=0
 else
   DEF_FLAGS += \
     -D_IS_NEED_DIR_DIFF_PATCH=1 \
-    -D_ChecksumPlugin_crc32 \
     -D_ChecksumPlugin_fadler64
+  ifeq ($(ZLIB),0)
+  else
+    DEF_FLAGS += -D_ChecksumPlugin_crc32
+  endif
   ifeq ($(MD5),0)
   else
     DEF_FLAGS += -D_ChecksumPlugin_md5 -I$(MD5_PATH)
@@ -181,12 +232,18 @@ endif
 ifeq ($(LZMA),0)
 else
   DEF_FLAGS += -D_CompressPlugin_lzma -D_CompressPlugin_lzma2 -I$(LZMA_PATH)
+  ifeq ($(ARM64ASM),0)
+  else
+    DEF_FLAGS += -D_LZMA_DEC_OPT
+  endif
 endif
 ifeq ($(ZSTD),0)
 else
-  DEF_FLAGS += \
-    -D_CompressPlugin_zstd -DZSTD_DISABLE_ASM -I$(ZSTD_PATH) -I$(ZSTD_PATH)/common \
-	-I$(ZSTD_PATH)/compress -I$(ZSTD_PATH)/decompress
+    DEF_FLAGS += -D_CompressPlugin_zstd
+	ifeq ($(ZSTD),1)
+      DEF_FLAGS += -DZSTD_DISABLE_ASM -DZSTD_HAVE_WEAK_SYMBOLS=0 -DZSTD_TRACE=0 \
+	    -I$(ZSTD_PATH) -I$(ZSTD_PATH)/common -I$(ZSTD_PATH)/compress -I$(ZSTD_PATH)/decompress
+	endif
 endif
 
 ifeq ($(MT),0)
@@ -200,19 +257,37 @@ else
     -D_IS_USED_PTHREAD=1
 endif
 
-PATCH_LINK := -lz			# link zlib
+PATCH_LINK := 
+ifeq ($(ZLIB),2)
+  PATCH_LINK += -lz			# link zlib
+endif
 ifeq ($(BZIP2),2)
   PATCH_LINK += -lbz2		# link bzip2
+endif
+ifeq ($(ZSTD),2)
+  PATCH_LINK += -lzstd		# link zstd
 endif
 DIFF_LINK  := $(PATCH_LINK)
 ifeq ($(MT),0)
 else
   DIFF_LINK += -lpthread	# link pthread
 endif
+ifeq ($(M32),0)
+else
+  DIFF_LINK += -m32
+endif
+ifeq ($(MINS),0)
+else
+  DIFF_LINK += -Wl,--gc-sections,--as-needed
+endif
 ifeq ($(CL),1)
   CXX := clang++
   CC  := clang
+endif
+ifeq ($(STATIC_CPP),0)
   DIFF_LINK += -lstdc++
+else
+  DIFF_LINK += -static-libstdc++
 endif
 
 CFLAGS   += $(DEF_FLAGS) 
