@@ -22,7 +22,7 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-fomit-frame-pointer" />
-					<Add option="-Os" />
+					<Add option="-O3" />
 					<Add option="-Wno-error=format-security" />
 					<Add option="-fvisibility=hidden" />
 					<Add option="-ffunction-sections -fdata-sections" />
@@ -40,7 +40,7 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-fomit-frame-pointer" />
-					<Add option="-Os" />
+					<Add option="-O3" />
 					<Add option="-m32" />
 					<Add option="-Wno-error=format-security" />
 					<Add option="-fvisibility=hidden" />
@@ -164,6 +164,9 @@
 		<Unit filename="../../../zstd/lib/decompress/zstd_decompress_block.h" />
 		<Unit filename="../../../zstd/lib/decompress/zstd_decompress_internal.h" />
 		<Unit filename="../../../zstd/lib/zstd.h" />
+		<Unit filename="../../bsdiff_wrapper/bspatch_wrapper.c">
+			<Option compilerVar="CC" />
+		</Unit>
 		<Unit filename="../../dirDiffPatch/dir_patch/dir_patch.c">
 			<Option compilerVar="CC" />
 		</Unit>
