@@ -34,7 +34,6 @@
 #include "covers.h"
 #include "adler_roll.h"
 #include "../mem_buf.h"
-
 namespace hdiff_private{
 
 typedef uint64_t        adler_uint_t;
@@ -62,7 +61,7 @@ static inline adler_hash_t adler_to_hash(const uint64_t x){ return x; }
 class TDigestMatcher{
 public:
     //throw std::runtime_error when data->read error or kMatchBlockSize error;
-    TDigestMatcher(const hpatch_TStreamInput* oldData,size_t kMatchBlockSize);
+    TDigestMatcher(const hpatch_TStreamInput* oldData,size_t kMatchBlockSize,size_t threadNum);
     void search_cover(const hpatch_TStreamInput* newData,hpatch_TOutputCovers* out_covers);
     ~TDigestMatcher();
 private:
@@ -72,6 +71,7 @@ private:
     std::vector<uint32_t>       m_sorted_limit;
     std::vector<size_t>         m_sorted_larger;
     bool                        m_isUseLargeSorted;
+    const size_t                m_threadNum;
     TAutoMem                    m_mem;
     size_t                      m_newCacheSize;
     size_t                      m_oldCacheSize;

@@ -29,6 +29,8 @@
 #include <stdexcept>  //std::runtime_error
 #include <algorithm>  //std::sort,std::equal_range
 #include "../compress_detect.h" //_getUIntCost
+#include "../../../../libParallel/parallel_channel.h"
+#include "../qsort_parallel.h"
 namespace hdiff_private{
 static  const size_t kMinTrustMatchedLength=1024*16;
 static  const size_t kMinMatchedLength = 16;
@@ -75,7 +77,7 @@ protected:
         if (streamPos+kMinCacheDataSize>streamSize) return false;
         hpatch_StreamPos_t readPos=(streamPos>=kBackupCacheSize)?(streamPos-kBackupCacheSize):0;
         size_t readLen=((streamSize-readPos)>=cacheSize)?cacheSize:(size_t)(streamSize-readPos);
-        
+
         unsigned char* dst=cache+cacheSize-readLen;
         if ((m_readPosEnd>readPos)&&(m_readPos<=readPos)){
             size_t moveLen=(size_t)(m_readPosEnd-readPos);
@@ -131,8 +133,8 @@ static size_t posToBlockIndex(hpatch_StreamPos_t pos,size_t kMatchBlockSize,size
 TDigestMatcher::~TDigestMatcher(){
 }
     
-TDigestMatcher::TDigestMatcher(const hpatch_TStreamInput* oldData,size_t kMatchBlockSize)
-:m_oldData(oldData),m_isUseLargeSorted(true),
+TDigestMatcher::TDigestMatcher(const hpatch_TStreamInput* oldData,size_t kMatchBlockSize,size_t threadNum)
+:m_oldData(oldData),m_isUseLargeSorted(true),m_threadNum(threadNum),
 m_newCacheSize(0),m_oldCacheSize(0),m_oldMinCacheSize(0),m_backupCacheSize(0),m_kMatchBlockSize(0){
     if (kMatchBlockSize>(oldData->streamSize+1)/2)
         kMatchBlockSize=(size_t)((oldData->streamSize+1)/2);
@@ -194,29 +196,68 @@ private:
     }
 };
 
+
+
+static inline void _filter_insert(TBloomFilter<adler_hash_t>* filter,const adler_uint_t* begin,const adler_uint_t* end){
+    while (begin!=end){
+        filter->insert(adler_to_hash(*begin++));
+    }
+}
+#if (_IS_USED_MULTITHREAD)
+static void _filter_insert_MT(TBloomFilter<adler_hash_t>* filter,const adler_uint_t* begin,const adler_uint_t* end){
+    while (begin!=end){
+        filter->insert_MT(adler_to_hash(*begin++));
+    }
+}
+#endif
+
+static void filter_insert_parallel(TBloomFilter<adler_hash_t>& filter,const adler_uint_t* begin,const adler_uint_t* end,
+                                   size_t threadNum,size_t kMinParallelSize=4096){
+        const size_t size=end-begin;
+#if (_IS_USED_MULTITHREAD)
+    if ((threadNum>1)&&(size>=kMinParallelSize)) {
+        const size_t maxThreanNum=size/(kMinParallelSize/2);
+        threadNum=(threadNum<=maxThreanNum)?threadNum:maxThreanNum;
+
+        const size_t step=size/threadNum;
+        const size_t threadCount=threadNum-1;
+        std::vector<std::thread> threads(threadCount);
+        for (size_t i=0;i<threadCount;i++,begin+=step)
+            threads[i]=std::thread(_filter_insert_MT,&filter,begin,begin+step);
+        _filter_insert_MT(&filter,begin,end);
+        for (size_t i=0;i<threadCount;i++)
+            threads[i].join();
+    }else
+#endif
+    {
+        _filter_insert(&filter,begin,end);
+    }
+}
+
 void TDigestMatcher::getDigests(){
     if (m_blocks.empty()) return;
     
     const size_t blockCount=m_blocks.size();
-    m_filter.init(blockCount);
     TStreamCache streamCache(m_oldData,m_mem.data(),m_newCacheSize+m_oldCacheSize);
-    for (size_t i=0; i<blockCount; ++i) {
+    for (size_t i=0;i<blockCount;++i) {
         hpatch_StreamPos_t readPos=blockIndexToPos(i,m_kMatchBlockSize,m_oldData->streamSize);
         streamCache.resetPos(0,readPos,m_kMatchBlockSize);
         adler_uint_t adler=adler_start(streamCache.data(),m_kMatchBlockSize);
-        m_filter.insert(adler_to_hash(adler));
         m_blocks[i]=adler;
         if (m_isUseLargeSorted)
             m_sorted_larger[i]=i;
         else
             m_sorted_limit[i]=(uint32_t)i;
     }
+    m_filter.init(blockCount);
+    filter_insert_parallel(m_filter,m_blocks.data(),m_blocks.data()+blockCount,m_threadNum);
+
     size_t kMaxCmpDeep= 1 + upperCount(kMinTrustMatchedLength,m_kMatchBlockSize);
     TIndex_comp comp(m_blocks.data(),m_blocks.size(),kMaxCmpDeep);
     if (m_isUseLargeSorted)
-        std::sort(m_sorted_larger.begin(),m_sorted_larger.end(),comp);
+        sort_parallel<uint64_t,TIndex_comp,8192,137>(m_sorted_larger.data(),m_sorted_larger.data()+m_sorted_larger.size(),comp,m_threadNum);
     else
-        std::sort(m_sorted_limit.begin(),m_sorted_limit.end(),comp);
+        sort_parallel<uint32_t,TIndex_comp,8192,137>(m_sorted_limit.data(),m_sorted_limit.data()+m_sorted_limit.size(),comp,m_threadNum);
 }
 
 struct TBlockStreamCache:public TStreamCache{
