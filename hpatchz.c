@@ -35,9 +35,8 @@
 #include "_clock_for_demo.h"
 #include "_atosize.h"
 #include "file_for_patch.h"
-
-#if (_IS_NEED_DIR_DIFF_PATCH)
 #include "dirDiffPatch/dir_patch/dir_patch.h"
+#if (_IS_NEED_DIR_DIFF_PATCH)
 #include "hpatch_dir_listener.h"
 #endif
 
@@ -86,7 +85,7 @@
 #if (_IS_NEED_BSDIFF)
 #   include "bsdiff_wrapper/bspatch_wrapper.h"
 #   ifndef _CompressPlugin_bz2
-#       define _CompressPlugin_bz2  //bsdiff need bz2
+#       define _CompressPlugin_bz2  //bsdiff4 need bz2
 #   endif
 #endif
 #if (_IS_NEED_VCDIFF)
@@ -156,24 +155,28 @@ static void printUsage(){
 #if (_IS_NEED_BSDIFF||_IS_NEED_VCDIFF)
            "      if diffFile is created by"
 #if (_IS_NEED_BSDIFF)
-           " hdiffz -BSD,bsdiff,"
+           " hdiffz -BSD,bsdiff4,"
 #endif
 #if (_IS_NEED_VCDIFF)
-           " hdiffz -VCD,xdelta,open-vcdiff,"
+           " hdiffz -VCD,xdelta3,open-vcdiff,"
 #endif
            " then requires\n"
            "        (cacheSize + 3*decompress buffer size)+O(1) bytes of memory;\n"
+#endif
+#if (_IS_NEED_VCDIFF)
+           "      if diffFile is VCDIFF: if created by hdiffz -VCD, then recommended patch by -s;\n"
+           "          if created by xdelta3,open-vcdiff, then recommended patch by -m.\n"
 #endif
            "  -m  oldPath all loaded into Memory;\n"
            "      requires (oldFileSize + 4*decompress buffer size)+O(1) bytes of memory.\n"
            "      if diffFile is single compressed diffData(created by hdiffz -SD-stepSize), then requires\n"
            "        (oldFileSize+ stepSize + 1*decompress buffer size)+O(1) bytes of memory.\n"
 #if (_IS_NEED_BSDIFF)
-           "      if diffFile is created by hdiffz -BSD,bsdiff, then requires\n"
+           "      if diffFile is created by hdiffz -BSD,bsdiff4, then requires\n"
            "        (oldFileSize + 3*decompress buffer size)+O(1) bytes of memory.\n"
 #endif
 #if (_IS_NEED_VCDIFF)
-           "      if diffFile is VCDIFF(created by hdiffz -VCD,xdelta,open-vcdiff), then requires\n"
+           "      if diffFile is VCDIFF(created by hdiffz -VCD,xdelta3,open-vcdiff), then requires\n"
            "        (sourceWindowSize+targetWindowSize + 3*decompress buffer size)+O(1) bytes of memory.\n"
 #endif
            "special options:\n"
@@ -187,14 +190,16 @@ static void printUsage(){
            "        -C-copy         checksum new files copy from old same files;\n"
            "        -C-no           no checksum;\n"
            "        -C-all          same as: -C-diff-old-new-copy;\n"
+#endif
+#if (_IS_NEED_VCDIFF)
+           "  -C-no or -C-new\n"
+           "      if diffFile is VCDIFF, then to close or open checksum, DEFAULT -C-new.\n"
+#endif
+#if (_IS_NEED_DIR_DIFF_PATCH)
            "  -n-maxOpenFileNumber\n"
            "      limit Number of open files at same time when stream directory patch;\n"
            "      maxOpenFileNumber>=8, DEFAULT -n-24, the best limit value by different\n"
            "        operating system.\n"
-#endif
-#if (_IS_NEED_VCDIFF)
-           "  -C-no or -C-new\n"
-           "      if diffFile is VCDIFF, then to close or open checksum.\n"
 #endif
            "  -f  Force overwrite, ignore write path already exists;\n"
            "      DEFAULT (no -f) not overwrite and then return error;\n"
@@ -772,7 +777,7 @@ static const hpatch_TDecompress* __find_decompressPlugin(const char* compressTyp
 
 #if (_IS_NEED_VCDIFF)
 static hpatch_BOOL getVcDiffDecompressPlugin(hpatch_TDecompress* out_decompressPlugin,
-                                             const hpatch_VcDiffInfo* vcdInfo,hpatch_byte* out_compressType){
+                                             const hpatch_VcDiffInfo* vcdInfo,char* out_compressType){
     const hpatch_TDecompress* decompressPlugin=0;
 
     out_compressType[0]='\0';
@@ -973,7 +978,7 @@ int hpatch(const char* oldFileName,const char* diffFileName,const char* outNewFi
                 diffInfo.newDataSize=bsdiffInfo.newDataSize;
                 diffInfo.oldDataSize=poldData->streamSize; //not saved oldDataSize
                 isBsDiff=hpatch_TRUE;
-                printf("patch bsdiff diffData!\n");
+                printf("patch bsdiff4 diffData!\n");
             }else
 #endif
 #if (_IS_NEED_VCDIFF)
