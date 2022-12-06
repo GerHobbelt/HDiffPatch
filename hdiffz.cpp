@@ -55,6 +55,9 @@
 #ifndef _IS_NEED_VCDIFF
 #   define _IS_NEED_VCDIFF 1
 #endif
+#if (_IS_NEED_VCDIFF)
+#   define _CompressPlugin_7zXZ
+#endif
 
 #ifndef _IS_NEED_DEFAULT_CompressPlugin
 #   define _IS_NEED_DEFAULT_CompressPlugin 1
@@ -495,11 +498,13 @@ static hpatch_TDecompress* __find_decompressPlugin(const char* compressType){
 #endif
     return 0;
 }
-static hpatch_BOOL findDecompress(hpatch_TDecompress** out_decompressPlugin,const char* compressType){
-    *out_decompressPlugin=0;
+static hpatch_BOOL findDecompress(hpatch_TDecompress* out_decompressPlugin,const char* compressType){
+    memset(out_decompressPlugin,0,sizeof(hpatch_TDecompress));
     if (strlen(compressType)==0) return hpatch_TRUE;
-    *out_decompressPlugin=__find_decompressPlugin(compressType);
-    return 0!=(*out_decompressPlugin);
+    hpatch_TDecompress* decompressPlugin=__find_decompressPlugin(compressType);
+    if (decompressPlugin==0) return hpatch_FALSE;
+    *out_decompressPlugin=*decompressPlugin;
+    return hpatch_TRUE;
 }
 
 #if (_IS_NEED_DIR_DIFF_PATCH)
@@ -1240,6 +1245,33 @@ clear:
     return result;
 }
 
+
+#if (_IS_NEED_VCDIFF)
+static hpatch_BOOL getVcDiffDecompressPlugin(hpatch_TDecompress* out_decompressPlugin,
+                                             hpatch_byte compressID){
+    static hpatch_BOOL _isInit=hpatch_FALSE;
+    const hpatch_TDecompress* decompressPlugin=0;
+    if (!_isInit){
+        _init_CompressPlugin_7zXZ();
+        _isInit=hpatch_TRUE;
+    }
+
+    memset(out_decompressPlugin,0,sizeof(*out_decompressPlugin));
+    switch (compressID){
+        case 0: return hpatch_TRUE;
+        case kVcDiff_compressorID_7zXZ:{
+            decompressPlugin=&_7zXZDecompressPlugin;
+        } break;
+        default: return hpatch_FALSE; //now unsupport
+    }
+    if (decompressPlugin){
+        *out_decompressPlugin=*decompressPlugin;
+        out_decompressPlugin->decError=hpatch_dec_ok;
+    }
+    return hpatch_TRUE;
+}
+#endif
+
 #define _check_on_error(errorType) { \
     if (result==HDIFF_SUCCESS) result=errorType; if (!_isInClear){ goto clear; } }
 #define check(value,errorType,errorInfo) { if (!(value)){ \
@@ -1315,7 +1347,8 @@ static int hdiff_in_mem(const char* oldFileName,const char* newFileName,const ch
               HDIFF_OPENREAD_ERROR,"open diffFile for test");
         printf("diffDataSize: %" PRIu64 "\n",(hpatch_StreamPos_t)diffMem.size());
         
-        hpatch_TDecompress* saved_decompressPlugin=0;
+        hpatch_TDecompress  _decompressPlugin={0};
+        hpatch_TDecompress* saved_decompressPlugin=&_decompressPlugin;
         {
             hpatch_compressedDiffInfo diffinfo;
             hpatch_singleCompressedDiffInfo sdiffInfo;
@@ -1335,13 +1368,15 @@ static int hdiff_in_mem(const char* oldFileName,const char* newFileName,const ch
                     printf("test single compressed diffData!\n");
 #if (_IS_NEED_BSDIFF)
             }else if (getBsDiffInfo_mem(&bsdiffInfo,diffMem.data(),diffMem.data_end())){
-                saved_decompressPlugin=&_bz2DecompressPlugin_unsz;
+                *saved_decompressPlugin=_bz2DecompressPlugin_unsz;
                 isBsDiff=hpatch_TRUE;
                 if (!diffSets.isDoDiff)
                     printf("test bsdiff's diffData!\n");
 #endif
 #if (_IS_NEED_VCDIFF)
             }else if (getVcDiffInfo_mem(&vcdiffInfo,diffMem.data(),diffMem.data_end())){
+                check(getVcDiffDecompressPlugin(saved_decompressPlugin,vcdiffInfo.compressorID),
+                      HDIFF_PATCH_ERROR,"VCDIFF unsported compressorID");
                 isVcDiff=hpatch_TRUE;
                 if (!diffSets.isDoDiff)
                     printf("test VCDIFF's diffData!\n");
@@ -1349,9 +1384,12 @@ static int hdiff_in_mem(const char* oldFileName,const char* newFileName,const ch
             }else{
                 check(hpatch_FALSE,HDIFF_PATCH_ERROR,"get diff info");
             }
-            if (!saved_decompressPlugin)
-                check(findDecompress(&saved_decompressPlugin,compressType),
+            if (saved_decompressPlugin->open==0){
+                check(findDecompress(saved_decompressPlugin,compressType),
                       HDIFF_PATCH_ERROR,"diff data saved compress type");
+            }
+            if (saved_decompressPlugin->open==0) saved_decompressPlugin=0;
+            else saved_decompressPlugin->decError=hpatch_dec_ok;
         }
         
         bool diffrt;
@@ -1453,7 +1491,8 @@ static int hdiff_by_stream(const char* oldFileName,const char* newFileName,const
 #if (_IS_NEED_VCDIFF)
         hpatch_BOOL isVcDiff=hpatch_FALSE;
 #endif
-        hpatch_TDecompress* saved_decompressPlugin=0;
+        hpatch_TDecompress  _decompressPlugin={0};
+        hpatch_TDecompress* saved_decompressPlugin=&_decompressPlugin;
         {
             hpatch_compressedDiffInfo diffInfo;
             hpatch_singleCompressedDiffInfo sdiffInfo;
@@ -1463,7 +1502,7 @@ static int hdiff_by_stream(const char* oldFileName,const char* newFileName,const
 #if (_IS_NEED_VCDIFF)
             hpatch_VcDiffInfo vcdiffInfo;
 #endif
-            const char* compressType=0;
+            const char* compressType="";
             if (getCompressedDiffInfo(&diffInfo,&diffData_in.base)){
                 compressType=diffInfo.compressType;
             }else if (getSingleCompressedDiffInfo(&sdiffInfo,&diffData_in.base,0)){
@@ -1473,13 +1512,15 @@ static int hdiff_by_stream(const char* oldFileName,const char* newFileName,const
                     printf("test single compressed diffData!\n");
 #if (_IS_NEED_BSDIFF)
             }else if (getBsDiffInfo(&bsdiffInfo,&diffData_in.base)){
-                saved_decompressPlugin=&_bz2DecompressPlugin_unsz;
+                *saved_decompressPlugin=_bz2DecompressPlugin_unsz;
                 isBsDiff=hpatch_TRUE;
                 if (!diffSets.isDoDiff)
                     printf("test bsdiff's diffData!\n");
 #endif
 #if (_IS_NEED_VCDIFF)
             }else if (getVcDiffInfo(&vcdiffInfo,&diffData_in.base)){
+                check(getVcDiffDecompressPlugin(saved_decompressPlugin,vcdiffInfo.compressorID),
+                      HDIFF_PATCH_ERROR,"VCDIFF unsported compressorID");
                 isVcDiff=hpatch_TRUE;
                 if (!diffSets.isDoDiff)
                     printf("test VCDIFF's diffData!\n");
@@ -1487,9 +1528,12 @@ static int hdiff_by_stream(const char* oldFileName,const char* newFileName,const
             }else{
                 check(hpatch_FALSE,HDIFF_PATCH_ERROR,"get diff info");
             }
-            if (!saved_decompressPlugin)
-              check(findDecompress(&saved_decompressPlugin,compressType),
-                    HDIFF_PATCH_ERROR,"diff data saved compress type");
+            if (saved_decompressPlugin->open==0){
+                check(findDecompress(saved_decompressPlugin,compressType),
+                      HDIFF_PATCH_ERROR,"diff data saved compress type");
+            }
+            if (saved_decompressPlugin->open==0) saved_decompressPlugin=0;
+            else saved_decompressPlugin->decError=hpatch_dec_ok;
         }
         bool diffrt;
         if (isSingleCompressedDiff)
@@ -1576,7 +1620,8 @@ int hdiff_resave(const char* diffFileName,const char* outDiffFileName,
     hpatch_TFileStreamInput_init(&diffData_in);
     hpatch_TFileStreamOutput_init(&diffData_out);
     
-    hpatch_TDecompress* decompressPlugin=0;
+    hpatch_TDecompress _decompressPlugin={0};
+    hpatch_TDecompress* decompressPlugin=&_decompressPlugin;
     check(hpatch_TFileStreamInput_open(&diffData_in,diffFileName),HDIFF_OPENREAD_ERROR,"open diffFile");
 #if (_IS_NEED_DIR_DIFF_PATCH)
     check(getDirDiffInfo(&diffData_in.base,&dirDiffInfo),HDIFF_OPENREAD_ERROR,"read diffFile");
@@ -1601,8 +1646,8 @@ int hdiff_resave(const char* diffFileName,const char* outDiffFileName,
         check(hpatch_FALSE,HDIFF_RESAVE_DIFFINFO_ERROR,"is hdiff file? get diff info");
     }
     {//decompressPlugin
-        findDecompress(&decompressPlugin,diffInfo.compressType);
-        if (decompressPlugin==0){
+        findDecompress(decompressPlugin,diffInfo.compressType);
+        if (decompressPlugin->open==0){
             if (diffInfo.compressedCount>0){
                 check(false,HDIFF_RESAVE_COMPRESSTYPE_ERROR,
                       "can no decompress \""+diffInfo.compressType+" data");
@@ -1612,6 +1657,7 @@ int hdiff_resave(const char* diffFileName,const char* outDiffFileName,
                 decompressPlugin=0;
             }
         }else{
+            decompressPlugin->decError=hpatch_dec_ok;
             printf("resave diffFile with decompress plugin: \"%s\" (need decompress %d)\n",diffInfo.compressType,diffInfo.compressedCount);
         }
     }
@@ -1806,14 +1852,20 @@ int hdiff_dir(const char* _oldPath,const char* _newPath,const char* outDiffFileN
         check(hpatch_TFileStreamInput_open(&diffData_in,outDiffFileName),
               HDIFF_OPENREAD_ERROR,"open check diffFile");
         printf("diffDataSize  : %" PRIu64 "\n",diffData_in.base.streamSize);
-        hpatch_TDecompress* saved_decompressPlugin=0;
+        hpatch_TDecompress _decompressPlugin={0};
+        hpatch_TDecompress* saved_decompressPlugin=&_decompressPlugin;
         hpatch_TChecksum* saved_checksumPlugin=0;
         {
             TDirDiffInfo dirinfo;
             check(getDirDiffInfo(&diffData_in.base,&dirinfo),DIRDIFF_PATCH_ERROR,"get dir diff info");
             check(dirinfo.isDirDiff,DIRDIFF_PATCH_ERROR,"dir diffFile data");
-            findDecompress(&saved_decompressPlugin,dirinfo.hdiffInfo.compressType);
-            findChecksum(&saved_checksumPlugin,dirinfo.checksumType);
+            check(findDecompress(saved_decompressPlugin,dirinfo.hdiffInfo.compressType),
+                  DIRDIFF_PATCH_ERROR,"diff data saved compress type");
+            if (saved_decompressPlugin->open==0) saved_decompressPlugin=0;
+            else saved_decompressPlugin->decError=hpatch_dec_ok;
+            check(findChecksum(&saved_checksumPlugin,dirinfo.checksumType),
+                  DIRDIFF_PATCH_ERROR,"diff data saved checksum type");
+            
         }
         //check(check_dirOldDataChecksum(oldPath.c_str(),&diffData_in.base,
         //      saved_decompressPlugin,saved_checksumPlugin),
