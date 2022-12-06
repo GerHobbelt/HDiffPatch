@@ -151,34 +151,30 @@ static void printUsage(){
            "      DEFAULT -s-4m; oldPath loaded as Stream;\n"
            "      cacheSize can like 262144 or 256k or 512m or 2g etc....\n"
            "      requires (cacheSize + 4*decompress buffer size)+O(1) bytes of memory.\n"
-           "      if diffFile is single compressed diffData, then requires\n"
+           "      if diffFile is single compressed diffData(created by hdiffz -SD-stepSize), then requires\n"
            "        (cacheSize+ stepSize + 1*decompress buffer size)+O(1) bytes of memory;\n"
-           "        see: hdiffz -SD-stepSize option.\n"
 #if (_IS_NEED_BSDIFF||_IS_NEED_VCDIFF)
            "      if diffFile is created by"
 #if (_IS_NEED_BSDIFF)
-           " bsdiff"
+           " hdiffz -BSD,bsdiff,"
 #endif
 #if (_IS_NEED_VCDIFF)
-           " xdelta(-S lzma)"
+           " hdiffz -VCD,xdelta,open-vcdiff,"
 #endif
-           ", then requires\n"
+           " then requires\n"
            "        (cacheSize + 3*decompress buffer size)+O(1) bytes of memory;\n"
 #endif
            "  -m  oldPath all loaded into Memory;\n"
            "      requires (oldFileSize + 4*decompress buffer size)+O(1) bytes of memory.\n"
-           "      if diffFile is single compressed diffData, then requires\n"
+           "      if diffFile is single compressed diffData(created by hdiffz -SD-stepSize), then requires\n"
            "        (oldFileSize+ stepSize + 1*decompress buffer size)+O(1) bytes of memory.\n"
-#if (_IS_NEED_BSDIFF||_IS_NEED_VCDIFF)
-           "      if diffFile is created by"
 #if (_IS_NEED_BSDIFF)
-           " bsdiff"
+           "      if diffFile is created by hdiffz -BSD,bsdiff, then requires\n"
+           "        (oldFileSize + 3*decompress buffer size)+O(1) bytes of memory.\n"
 #endif
 #if (_IS_NEED_VCDIFF)
-           " xdelta(-S lzma)"
-#endif
-           ", then requires\n"
-           "        (oldFileSize + 3*decompress buffer size)+O(1) bytes of memory.\n"
+           "      if diffFile is VCDIFF(created by hdiffz -VCD,xdelta,open-vcdiff), then requires\n"
+           "        (sourceWindowSize+targetWindowSize + 3*decompress buffer size)+O(1) bytes of memory.\n"
 #endif
            "special options:\n"
 #if (_IS_NEED_DIR_DIFF_PATCH)
@@ -777,12 +773,8 @@ static const hpatch_TDecompress* __find_decompressPlugin(const char* compressTyp
 #if (_IS_NEED_VCDIFF)
 static hpatch_BOOL getVcDiffDecompressPlugin(hpatch_TDecompress* out_decompressPlugin,
                                              hpatch_byte compressID,hpatch_byte* out_compressType){
-    static hpatch_BOOL _isInit=hpatch_FALSE;
     const hpatch_TDecompress* decompressPlugin=0;
-    if (!_isInit){
-        _init_CompressPlugin_7zXZ();
-        _isInit=hpatch_TRUE;
-    }
+    _init_CompressPlugin_7zXZ();
 
     out_compressType[0]='\0';
     memset(out_decompressPlugin,0,sizeof(*out_decompressPlugin));

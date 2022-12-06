@@ -206,7 +206,7 @@ struct TDiffStream{
     ~TDiffStream();
     
     void pushBack(const unsigned char* src,size_t n);
-    void packUInt(hpatch_StreamPos_t uValue);
+    size_t packUInt(hpatch_StreamPos_t uValue);
     inline TPlaceholder packUInt_pos(hpatch_StreamPos_t uValue){
         hpatch_StreamPos_t pos=writePos;
         packUInt(uValue);
@@ -217,13 +217,14 @@ struct TDiffStream{
     hpatch_StreamPos_t pushStream(const hpatch_TStreamInput* stream,
                                   const hdiff_TCompress*     compressPlugin,
                                   const TPlaceholder&        update_compress_sizePos,
-                                  bool isMustCompress=false);
+                                  bool isMustCompress=false,const hpatch_StreamPos_t cancelSizeOnCancelCompress=0);
     hpatch_StreamPos_t pushStream(const hpatch_TStreamInput* stream,
                                   const hdiff_TCompress*     compressPlugin,
-                                  bool isMustCompress=false){
-                TPlaceholder nullPos(0,0); return pushStream(stream,compressPlugin,nullPos,isMustCompress); }
-    void pushStream(const hpatch_TStreamInput* stream){
-                            TPlaceholder nullPos(0,0); pushStream(stream,0,nullPos); }
+                                  bool isMustCompress=false,const hpatch_StreamPos_t cancelSizeOnCancelCompress=0){
+                TPlaceholder nullPos(0,0); return pushStream(stream,compressPlugin,nullPos,
+                                                             isMustCompress,cancelSizeOnCancelCompress); }
+    hpatch_StreamPos_t pushStream(const hpatch_TStreamInput* stream){
+                _pushStream(stream); return stream->streamSize; }
     hpatch_StreamPos_t getWritedPos()const{ return writePos; }
 private:
     const hpatch_TStreamOutput*  out_diff;
