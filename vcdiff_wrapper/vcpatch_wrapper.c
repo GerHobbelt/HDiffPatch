@@ -44,22 +44,25 @@
 #   define __RUN_MEM_SAFE_CHECK
 #endif
 
-static const unsigned char kVcDiffType[3]={('V'|(1<<7)),('C'|(1<<7)),('D'|(1<<7))};
+static const hpatch_byte kVcDiffType[3]={('V'|(1<<7)),('C'|(1<<7)),('D'|(1<<7))};
 #define     kVcDiffDefaultVersion   0
 #define     kVcDiffGoogleVersion    'S'
 #define     kVcDiffMinHeadLen       (sizeof(kVcDiffType)+1+1)
+
+static const char* kHDiffzAppHead_a="$hdiffz-VCDIFF&7zXZ#a";
+#define kHDiffzAppHeadLen   21 // = strlen(kHDiffzAppHead_a);
 
 #define _clip_unpackUInt64(_clip,_result) { \
     if (!_TStreamCacheClip_unpackUIntWithTag(_clip,_result,0)) \
         return _hpatch_FALSE; \
 }
 #define _clip_readUInt8(_clip,_result) { \
-    const unsigned char* buf=_TStreamCacheClip_readData(_clip,1); \
+    const hpatch_byte* buf=_TStreamCacheClip_readData(_clip,1); \
     if (buf!=0) *(_result)=*buf; \
     else return _hpatch_FALSE; \
 }
 #define _clip_readUInt32_BigEndian(_clip,_result) { \
-    const unsigned char* buf=_TStreamCacheClip_readData(_clip,4); \
+    const hpatch_byte* buf=_TStreamCacheClip_readData(_clip,4); \
     if (buf!=0) *(_result)=(((hpatch_uint32_t)buf[0])<<24)|(((hpatch_uint32_t)buf[1])<<16) \
                            |(((hpatch_uint32_t)buf[2])<<8)|((hpatch_uint32_t)buf[3]); \
     else return _hpatch_FALSE; \
@@ -256,21 +259,22 @@ const vcdiff_code_table_t get_vcdiff_code_table_default(){
 #undef C7
 #undef C8
 
+#define _kWindowCacheSize 1024
 static hpatch_BOOL _getVcDiffWindowSizes(hpatch_VcDiffInfo* out_diffinfo,const hpatch_TStreamInput* diffStream);
 
 hpatch_BOOL getVcDiffInfo(hpatch_VcDiffInfo* out_diffinfo,const hpatch_TStreamInput* diffStream,
                           hpatch_BOOL isNeedWindowSize){
     TStreamCacheClip  diffClip;
-    unsigned char _cache[hpatch_kStreamCacheSize];
-    unsigned char Hdr_Indicator;
+    hpatch_byte _window_cache[_kWindowCacheSize];
+    hpatch_byte Hdr_Indicator;
     memset(out_diffinfo,0,sizeof(*out_diffinfo));
     if (diffStream->streamSize<kVcDiffMinHeadLen)
         return _hpatch_FALSE;
-    assert(kVcDiffMinHeadLen<=hpatch_kStreamCacheSize);
-    _TStreamCacheClip_init(&diffClip,diffStream,0,diffStream->streamSize,_cache,sizeof(_cache));
+    assert(kVcDiffMinHeadLen<=_kWindowCacheSize);
+    _TStreamCacheClip_init(&diffClip,diffStream,0,diffStream->streamSize,_window_cache,sizeof(_window_cache));
 
     {//head
-        const unsigned char* buf=_TStreamCacheClip_readData(&diffClip,kVcDiffMinHeadLen);
+        const hpatch_byte* buf=_TStreamCacheClip_readData(&diffClip,kVcDiffMinHeadLen);
         if (buf==0)
             return _hpatch_FALSE;
         if (0!=memcmp(buf,kVcDiffType,sizeof(kVcDiffType)))
@@ -291,7 +295,7 @@ hpatch_BOOL getVcDiffInfo(hpatch_VcDiffInfo* out_diffinfo,const hpatch_TStreamIn
             return _hpatch_FALSE; //unsupport compressor ID
     }
     if (Hdr_Indicator&(1<<1)) // VCD_CODETABLE
-        return _hpatch_FALSE; //unsupport code table
+        return _hpatch_FALSE; // unsupport code table
     if (Hdr_Indicator&(1<<2)) // VCD_APPHEADER
         _clip_unpackUInt64(&diffClip,&out_diffinfo->appHeadDataLen);
     out_diffinfo->appHeadDataOffset=_TStreamCacheClip_readPosOfSrcStream(&diffClip);
@@ -303,18 +307,27 @@ hpatch_BOOL getVcDiffInfo(hpatch_VcDiffInfo* out_diffinfo,const hpatch_TStreamIn
             return _hpatch_FALSE; //data size error
     }
 #endif
+    assert(kHDiffzAppHeadLen==strlen(kHDiffzAppHead_a));
+    assert(kHDiffzAppHeadLen<=_kWindowCacheSize);
+    if (out_diffinfo->appHeadDataLen==kHDiffzAppHeadLen){
+        const hpatch_byte* pAppHead=_TStreamCacheClip_accessData(&diffClip,kHDiffzAppHeadLen);
+        if (pAppHead==0)
+            return _hpatch_FALSE;
+        if (0==memcmp(pAppHead,kHDiffzAppHead_a,kHDiffzAppHeadLen))
+            out_diffinfo->isHDiffzAppHead_a=hpatch_TRUE;
+    }
     if (isNeedWindowSize){
         return _getVcDiffWindowSizes(out_diffinfo,diffStream);
     }else{
         out_diffinfo->maxSrcWindowsSize=hpatch_kNullStreamPos;
-        out_diffinfo->maxSrcAddTargetWindowsSize=hpatch_kNullStreamPos;
+        out_diffinfo->maxTargetWindowsSize=hpatch_kNullStreamPos;
         out_diffinfo->sumTargetWindowsSize=hpatch_kNullStreamPos;
         return hpatch_TRUE;
     }
 }
 
-hpatch_BOOL getVcDiffInfo_mem(hpatch_VcDiffInfo* out_diffinfo,const unsigned char* diffData,
-                              const unsigned char* diffData_end,hpatch_BOOL isNeedWindowSize){
+hpatch_BOOL getVcDiffInfo_mem(hpatch_VcDiffInfo* out_diffinfo,const hpatch_byte* diffData,
+                              const hpatch_byte* diffData_end,hpatch_BOOL isNeedWindowSize){
     hpatch_TStreamInput diffStream;
     mem_as_hStreamInput(&diffStream,diffData,diffData_end);
     return getVcDiffInfo(out_diffinfo,&diffStream,isNeedWindowSize);
@@ -324,7 +337,7 @@ hpatch_BOOL getIsVcDiff(const hpatch_TStreamInput* diffData){
     hpatch_VcDiffInfo diffinfo;
     return getVcDiffInfo(&diffinfo,diffData,hpatch_FALSE);
 }
-hpatch_BOOL getIsVcDiff_mem(const unsigned char* diffData,const unsigned char* diffData_end){
+hpatch_BOOL getIsVcDiff_mem(const hpatch_byte* diffData,const hpatch_byte* diffData_end){
     hpatch_TStreamInput diffStream;
     mem_as_hStreamInput(&diffStream,diffData,diffData_end);
     return getIsVcDiff(&diffStream);
@@ -363,12 +376,12 @@ static hpatch_inline void vcpatch_checksum_init(vcpatch_checksum_t* self,hpatch_
 
 
     static hpatch_BOOL __vcpatch_checksum_read_writed(const struct hpatch_TStreamOutput* stream,hpatch_StreamPos_t readFromPos,
-                                                    unsigned char* out_data,unsigned char* out_data_end){
+                                                    hpatch_byte* out_data,hpatch_byte* out_data_end){
         vcpatch_checksum_t* self=(vcpatch_checksum_t*)stream->streamImport;
         return self->_dstStream->read_writed(self->_dstStream,readFromPos,out_data,out_data_end);      
     }
     static hpatch_BOOL __vcpatch_checksum_write(const struct hpatch_TStreamOutput* stream,hpatch_StreamPos_t writeToPos,
-                                                const unsigned char* data,const unsigned char* data_end){
+                                                const hpatch_byte* data,const hpatch_byte* data_end){
         vcpatch_checksum_t* self=(vcpatch_checksum_t*)stream->streamImport;
         self->window_curAdler32=adler32_append(self->window_curAdler32,data,data_end-data);
         return self->_dstStream->write(self->_dstStream,writeToPos,data,data_end);
@@ -504,20 +517,18 @@ hpatch_BOOL _vcpatch_delta(_TOutStreamCache* outCache,hpatch_StreamPos_t targetL
 }
 
 
-
-#define _smallCacheSize(cacheSize) ((hpatch_kStreamCacheSize<cacheSize)?hpatch_kStreamCacheSize:cacheSize)
-
 static hpatch_BOOL _getStreamClip(TStreamCacheClip* clip,hpatch_byte Delta_Indicator,hpatch_byte index,
                                   const hpatch_TStreamInput* diffStream,hpatch_StreamPos_t* curDiffOffset,
                                   hpatch_TDecompress* decompressPlugin,_TDecompressInputStream* decompressers,
-                                  hpatch_StreamPos_t dataLen,unsigned char* temp_cache,hpatch_size_t cache_size){
+                                  hpatch_StreamPos_t dataLen,hpatch_byte* temp_cache,hpatch_size_t cache_size){
     hpatch_StreamPos_t uncompressedLen;
     hpatch_StreamPos_t compressedLen;
     if ((Delta_Indicator&(1<<index))){
         hpatch_StreamPos_t readedBytes;
         TStreamCacheClip   tempClip;
+        hpatch_byte  _temp_cache[hpatch_kMaxPackedUIntBytes];
         _TStreamCacheClip_init(&tempClip,diffStream,*curDiffOffset,
-                                diffStream->streamSize,temp_cache,_smallCacheSize(cache_size));
+                                diffStream->streamSize,_temp_cache,sizeof(_temp_cache));
         _clip_unpackUInt64(&tempClip,&uncompressedLen);
         readedBytes=_TStreamCacheClip_readPosOfSrcStream(&tempClip)-(*curDiffOffset);
         (*curDiffOffset)+=readedBytes;
@@ -535,7 +546,7 @@ static hpatch_BOOL _getStreamClip(TStreamCacheClip* clip,hpatch_byte Delta_Indic
 static hpatch_BOOL _getVcDiffWindowSizes(hpatch_VcDiffInfo* out_diffinfo,const hpatch_TStreamInput* diffStream){
     hpatch_StreamPos_t windowOffset=out_diffinfo->windowOffset;
     hpatch_StreamPos_t maxSrcWindowsSize=0;
-    hpatch_StreamPos_t maxSrcAddTargetWindowsSize=0;
+    hpatch_StreamPos_t maxTargetWindowsSize=0;
     hpatch_StreamPos_t sumTargetWindowsSize=0;
     hpatch_byte _cacheBuf[1024];
     //window loop
@@ -550,14 +561,14 @@ static hpatch_BOOL _getVcDiffWindowSizes(hpatch_VcDiffInfo* out_diffinfo,const h
         hpatch_StreamPos_t curDiffOffset;
         hpatch_BOOL isHave_srcData;
         vcpatch_checksum_t checksumer;
-        unsigned char Delta_Indicator;
+        hpatch_byte Delta_Indicator;
         {
             TStreamCacheClip   diffClip;
             _TStreamCacheClip_init(&diffClip,diffStream,windowOffset,diffStream->streamSize,
                                    _cacheBuf,sizeof(_cacheBuf));
             {
                 hpatch_BOOL window_isHaveAdler32;
-                unsigned char Win_Indicator;
+                hpatch_byte Win_Indicator;
                 _clip_readUInt8(&diffClip,&Win_Indicator);
                 window_isHaveAdler32=(0!=(Win_Indicator&VCD_ADLER32));
                 if (window_isHaveAdler32) Win_Indicator-=VCD_ADLER32;
@@ -597,37 +608,164 @@ static hpatch_BOOL _getVcDiffWindowSizes(hpatch_VcDiffInfo* out_diffinfo,const h
 
             {
                 hpatch_StreamPos_t sumSize=sumTargetWindowsSize+targetLen;
-                hpatch_StreamPos_t srcAddTarget=srcLen+targetLen;
 #ifdef __RUN_MEM_SAFE_CHECK
-                if ((sumSize<sumTargetWindowsSize)||(srcAddTarget<srcLen))
+                if (sumSize<sumTargetWindowsSize)
                     return _hpatch_FALSE; //error data
 #endif
                 sumTargetWindowsSize=sumSize;
                 maxSrcWindowsSize=(maxSrcWindowsSize>=srcLen)?maxSrcWindowsSize:srcLen;
-                maxSrcAddTargetWindowsSize=(maxSrcAddTargetWindowsSize>=srcAddTarget)?maxSrcAddTargetWindowsSize:srcAddTarget;
+                maxTargetWindowsSize=(maxTargetWindowsSize>=targetLen)?maxTargetWindowsSize:targetLen;
             }
         }
     }
     out_diffinfo->maxSrcWindowsSize=maxSrcWindowsSize;
-    out_diffinfo->maxSrcAddTargetWindowsSize=maxSrcAddTargetWindowsSize;
+    out_diffinfo->maxTargetWindowsSize=maxTargetWindowsSize;
     out_diffinfo->sumTargetWindowsSize=sumTargetWindowsSize;
     return hpatch_TRUE;
 }
 
+
 #define _kCacheVcDecCount (1+3)
+
+typedef struct{
+    hpatch_TStreamInput srcStream;
+    hpatch_StreamPos_t srcPos_bck;
+    hpatch_size_t      srcLen_bck;
+    hpatch_size_t      mem_offset;
+    hpatch_size_t      mem_size;
+    hpatch_byte*       mem_cache;
+    const hpatch_TStreamInput* srcData_bck;
+}src_cache_t;
+
+static hpatch_inline void _src_cache_move_by_offset(src_cache_t* self,hpatch_size_t dstPos,hpatch_size_t movePos){
+    hpatch_size_t mem_size=self->mem_size;
+    hpatch_StreamPos_t noff=(hpatch_StreamPos_t)self->mem_offset+mem_size+movePos-dstPos;
+    if (noff>mem_size){
+        noff-=mem_size;
+        if (noff>mem_size)
+            noff-=mem_size;
+    }
+    self->mem_offset=(hpatch_size_t)noff;
+}
+static hpatch_BOOL _src_cache_update_by_offset(src_cache_t* self,const hpatch_TStreamInput* srcData,
+                                               hpatch_StreamPos_t srcPos,hpatch_StreamPos_t dstPos,hpatch_size_t updateLen){
+    const hpatch_size_t mem_size=self->mem_size;
+    hpatch_byte*  temp_cache=self->mem_cache;
+    srcPos+=dstPos;
+    dstPos+=self->mem_offset;
+    if (dstPos<mem_size){
+        hpatch_size_t readLen=updateLen;
+        if (dstPos+readLen>mem_size) readLen=mem_size-dstPos;
+        if (!srcData->read(srcData,srcPos,temp_cache+(hpatch_size_t)dstPos,temp_cache+(hpatch_size_t)dstPos+readLen))
+            return _hpatch_FALSE;
+        srcPos+=readLen;
+        dstPos+=readLen;
+        updateLen-=readLen;
+        if (updateLen==0) return hpatch_TRUE;
+    }
+    dstPos-=mem_size;
+    if (!srcData->read(srcData,srcPos,temp_cache+(hpatch_size_t)dstPos,temp_cache+(hpatch_size_t)dstPos+updateLen))
+        return _hpatch_FALSE;
+    return hpatch_TRUE;
+}
+
+static hpatch_BOOL _src_cache_read(const struct hpatch_TStreamInput* stream,hpatch_StreamPos_t readFromPos,
+                                   unsigned char* out_data,unsigned char* out_data_end){
+    src_cache_t* self=(src_cache_t*)stream->streamImport;
+    hpatch_size_t readLen;
+    const hpatch_size_t mem_size=self->mem_size;
+    assert(mem_size>=readFromPos+(hpatch_size_t)(out_data_end-out_data));
+    readFromPos+=self->mem_offset;
+    if (readFromPos<mem_size){
+        readLen=out_data_end-out_data;
+        if (readFromPos+readLen>mem_size)
+            readLen=mem_size-(hpatch_size_t)readFromPos;
+        memcpy(out_data,self->mem_cache+(hpatch_size_t)readFromPos,readLen);
+        readFromPos+=readLen;
+        out_data+=readLen;
+        if (out_data==out_data_end) return hpatch_TRUE;
+    }
+    readFromPos-=mem_size;
+    readLen=out_data_end-out_data;
+    assert(mem_size>=readFromPos+readLen);
+    memcpy(out_data,self->mem_cache+(hpatch_size_t)readFromPos,readLen);
+    return hpatch_TRUE;
+}
+
+static hpatch_inline void src_cache_init(src_cache_t* self,hpatch_StreamPos_t srcLenMax,hpatch_byte** mem_cache,hpatch_size_t* allCacheSize){
+    hpatch_size_t mem_size=0;
+    if ((srcLenMax>0)&&(srcLenMax+_kCacheVcDecCount*hpatch_kStreamCacheSize<=(*allCacheSize))){
+        mem_size=(hpatch_size_t)srcLenMax;
+    }
+    self->srcPos_bck=0;
+    self->srcData_bck=0;
+    self->mem_cache=*mem_cache;
+    self->mem_offset=0;
+    self->mem_size=mem_size;
+    (*allCacheSize)-=mem_size;
+    (*mem_cache)+=mem_size;
+}
+
+static hpatch_inline hpatch_BOOL src_cache_isCanCache(src_cache_t* self,hpatch_StreamPos_t srcLen){
+    return (srcLen>0)&&(srcLen<=self->mem_size);
+}
+
+static hpatch_TStreamInput* src_cache_update(src_cache_t* self,const hpatch_TStreamInput* srcData,
+                                             hpatch_size_t srcLen,hpatch_StreamPos_t srcPos){
+    if ((self->srcData_bck!=srcData)||(self->srcPos_bck+self->srcLen_bck<=srcPos)||(self->srcPos_bck>=srcPos+srcLen)){
+        self->mem_offset=0;
+        if (!srcData->read(srcData,srcPos,self->mem_cache,self->mem_cache+srcLen))
+            return _hpatch_FALSE;
+    }else{//hit cache
+        hpatch_size_t dstPos;
+        hpatch_size_t movePos;
+        hpatch_size_t moveLen;
+        if (self->srcPos_bck<=srcPos){
+            dstPos=0;
+            movePos=(hpatch_size_t)(srcPos-self->srcPos_bck);
+            moveLen=self->srcLen_bck-movePos;
+        }else{
+            dstPos=(hpatch_size_t)(self->srcPos_bck-srcPos);
+            movePos=0;
+            moveLen=self->srcLen_bck;
+        }
+        if (dstPos+moveLen>=srcLen)
+            moveLen=srcLen-dstPos;
+        _src_cache_move_by_offset(self,dstPos,movePos);
+        if (dstPos>0){
+            if (!_src_cache_update_by_offset(self,srcData,srcPos,0,dstPos))
+                return _hpatch_FALSE;
+        }
+        dstPos+=moveLen;
+        if (dstPos<srcLen){
+            if (!_src_cache_update_by_offset(self,srcData,srcPos,dstPos,srcLen-dstPos))
+                return _hpatch_FALSE;
+        }
+    }
+
+    self->srcStream.streamImport=self;
+    self->srcStream.streamSize=srcLen;
+    self->srcStream.read=_src_cache_read;
+    self->srcStream.streamImport=self;
+    self->srcStream.streamImport=self;
+
+    self->srcPos_bck=srcPos;
+    self->srcLen_bck=srcLen;
+    self->srcData_bck=srcData;
+    return &self->srcStream;
+}
+
 
 hpatch_BOOL _vcpatch_window(const hpatch_TStreamOutput* out_newData,const hpatch_TStreamInput* oldData,
                             const hpatch_TStreamInput* diffStream,hpatch_TDecompress* decompressPlugin,
                             _TDecompressInputStream* decompressers,hpatch_StreamPos_t windowOffset,
-                            hpatch_BOOL isGoogleVersion,hpatch_BOOL isNeedChecksum,
-                            unsigned char* tempCaches,size_t allCacheSize){
-    hpatch_StreamPos_t srcPos_bck=0;
-    hpatch_size_t srcLen_bck=0;
-    const hpatch_TStreamInput* srcData_bck=0;
-    hpatch_TStreamInput srcData_cache;
+                            hpatch_StreamPos_t srcLenMax,hpatch_BOOL isGoogleVersion,
+                            hpatch_BOOL isNeedChecksum,hpatch_byte* tempCaches,hpatch_size_t allCacheSize){
+    src_cache_t src_cache;
     _TOutStreamCache outCache;
     if (allCacheSize<hpatch_kMaxPackedUIntBytes*_kCacheVcDecCount) return _hpatch_FALSE;
     _TOutStreamCache_init(&outCache,out_newData,0,0); //need reset cache
+    src_cache_init(&src_cache,srcLenMax,&tempCaches,&allCacheSize);
 
     //window loop
     while (windowOffset<diffStream->streamSize){
@@ -641,14 +779,15 @@ hpatch_BOOL _vcpatch_window(const hpatch_TStreamOutput* out_newData,const hpatch
         hpatch_StreamPos_t curDiffOffset;
         const hpatch_TStreamInput* srcData;
         vcpatch_checksum_t checksumer;
-        unsigned char Delta_Indicator;
+        hpatch_byte Delta_Indicator;
         {
             TStreamCacheClip   diffClip;
+            hpatch_byte _window_cache[_kWindowCacheSize];
             _TStreamCacheClip_init(&diffClip,diffStream,windowOffset,diffStream->streamSize,
-                                   tempCaches+allCacheSize-_smallCacheSize(allCacheSize),_smallCacheSize(allCacheSize));
+                                   _window_cache,sizeof(_window_cache));
             {
                 hpatch_BOOL window_isHaveAdler32;
-                unsigned char Win_Indicator;
+                hpatch_byte Win_Indicator;
                 _clip_readUInt8(&diffClip,&Win_Indicator);
                 window_isHaveAdler32=(0!=(Win_Indicator&VCD_ADLER32));
                 if (window_isHaveAdler32) Win_Indicator-=VCD_ADLER32;
@@ -701,68 +840,28 @@ hpatch_BOOL _vcpatch_window(const hpatch_TStreamOutput* out_newData,const hpatch
             windowOffset=curDiffOffset+dataLen+instLen+addrLen;
         }
 
+        if (src_cache_isCanCache(&src_cache,srcLen)){//old all in cache?
+            assert(srcData!=0);
+            srcData=src_cache_update(&src_cache,srcData,(hpatch_size_t)srcLen,srcPos);
+            if (srcData==0) return _hpatch_FALSE;
+            srcPos=0;
+        }
         {
             hpatch_BOOL       ret;
             const hpatch_BOOL isInterleaved=((dataLen==0)&(addrLen==0));
             TStreamCacheClip  dataClip;
             TStreamCacheClip  instClip;
             TStreamCacheClip  addrClip;
-            unsigned char*    temp_cache=tempCaches;
-            size_t            cache_size=allCacheSize;
-            if ((srcLen>0)&&(srcLen+_kCacheVcDecCount*hpatch_kStreamCacheSize<=cache_size)){//old all in cache
-                const size_t memSize=(size_t)srcLen;
-                if ((srcData_bck!=srcData)||(srcPos_bck+srcLen_bck<=srcPos)||(srcPos_bck>=srcPos+memSize)){
-                    if (!srcData->read(srcData,srcPos,temp_cache,temp_cache+memSize))
-                        return _hpatch_FALSE;
-                }else{//hit cache
-                    hpatch_size_t dstPos;
-                    hpatch_size_t movePos;
-                    hpatch_size_t moveLen;
-                    if (srcPos_bck<=srcPos){
-                        dstPos=0;
-                        movePos=(hpatch_size_t)(srcPos-srcPos_bck);
-                        moveLen=srcLen_bck-movePos;
-                    }else{
-                        dstPos=(hpatch_size_t)(srcPos_bck-srcPos);
-                        movePos=0;
-                        moveLen=srcLen_bck;
-                    }
-                    if (dstPos+moveLen>=memSize)
-                        moveLen=memSize-dstPos;
-                    if (dstPos!=movePos)
-                        memmove(temp_cache+dstPos,temp_cache+movePos,moveLen);
-                    if (dstPos>0){
-                        if (!srcData->read(srcData,srcPos,temp_cache,temp_cache+dstPos))
-                            return _hpatch_FALSE;
-                    }
-                    dstPos+=moveLen;
-                    if (dstPos<memSize){
-                        if (!srcData->read(srcData,srcPos+dstPos,temp_cache+dstPos,temp_cache+memSize))
-                            return _hpatch_FALSE;
-                    }
-                }
-
-                mem_as_hStreamInput(&srcData_cache,temp_cache,temp_cache+memSize);
-                temp_cache+=memSize;
-                cache_size-=memSize;
-                srcPos_bck=srcPos;
-                srcLen_bck=memSize;
-                srcData_bck=srcData;
-                srcPos=0;
-                srcData=&srcData_cache;
-            }else{
-                srcPos_bck=0;
-                srcLen_bck=0;
-                srcData_bck=0;
-            }
-            {//target all in cache?
-                size_t out_cache_size;
-                if ((targetLen>0)&&(targetLen+3*hpatch_kStreamCacheSize<=cache_size)){
-                    out_cache_size=(size_t)targetLen;
+            hpatch_byte*      temp_cache=tempCaches;
+            hpatch_size_t     cache_size=allCacheSize;
+            {
+                hpatch_size_t out_cache_size;
+                if ((targetLen>0)&&(targetLen+3*hpatch_kStreamCacheSize<=cache_size)){//target all in cache?
+                    out_cache_size=(hpatch_size_t)targetLen;
                     cache_size=(cache_size-out_cache_size)/(isInterleaved?1:3);
                 }else{
                     #define kBetterDecompressBufSize (1024*32)
-                    size_t dec_size=cache_size/_kCacheVcDecCount;
+                    hpatch_size_t dec_size=cache_size/_kCacheVcDecCount;
                     dec_size=(dec_size<=kBetterDecompressBufSize)?dec_size:kBetterDecompressBufSize;
                     out_cache_size=cache_size-dec_size*(isInterleaved?1:3);
                     cache_size=dec_size;
@@ -809,7 +908,7 @@ hpatch_BOOL vcpatch_with_cache(const hpatch_TStreamOutput* out_newData,
                                const hpatch_TStreamInput*  oldData,
                                const hpatch_TStreamInput*  diffStream,
                                hpatch_TDecompress* decompressPlugin,hpatch_BOOL isNeedChecksum,
-                               unsigned char* temp_cache,unsigned char* temp_cache_end){
+                               hpatch_byte* temp_cache,hpatch_byte* temp_cache_end){
     hpatch_VcDiffInfo diffInfo;
     hpatch_size_t i;
     hpatch_BOOL  result=hpatch_TRUE;
@@ -822,7 +921,7 @@ hpatch_BOOL vcpatch_with_cache(const hpatch_TStreamOutput* out_newData,
     assert(oldData->read!=0);
     assert(diffStream!=0);
     assert(diffStream->read!=0);
-    if (!getVcDiffInfo(&diffInfo,diffStream,hpatch_FALSE))
+    if (!getVcDiffInfo(&diffInfo,diffStream,hpatch_TRUE))
         return _hpatch_FALSE;
 
     if (diffInfo.compressorID){
@@ -833,8 +932,8 @@ hpatch_BOOL vcpatch_with_cache(const hpatch_TStreamOutput* out_newData,
     }
 
     result=_vcpatch_window(out_newData,oldData,diffStream,decompressPlugin,decompressers,
-                           diffInfo.windowOffset,diffInfo.isGoogleVersion,isNeedChecksum,
-                           temp_cache,temp_cache_end-temp_cache);
+                           diffInfo.windowOffset,diffInfo.maxSrcWindowsSize,diffInfo.isGoogleVersion,
+                           isNeedChecksum,temp_cache,temp_cache_end-temp_cache);
 
     for (i=0;i<sizeof(decompressers)/sizeof(_TDecompressInputStream);++i) {
         if (decompressers[i].decompressHandle){
