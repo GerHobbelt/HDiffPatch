@@ -1,5 +1,5 @@
 # [HDiffPatch](https://github.com/sisong/HDiffPatch)
-[![release](https://img.shields.io/badge/release-v4.4.0-blue.svg)](https://github.com/sisong/HDiffPatch/releases) 
+[![release](https://img.shields.io/badge/release-v4.4.1-blue.svg)](https://github.com/sisong/HDiffPatch/releases) 
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/sisong/HDiffPatch/blob/master/LICENSE) 
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-blue.svg)](https://github.com/sisong/HDiffPatch/pulls)
 [![+issue Welcome](https://img.shields.io/github/issues-raw/sisong/HDiffPatch?color=green&label=%2Bissue%20welcome)](https://github.com/sisong/HDiffPatch/issues)   
@@ -176,7 +176,7 @@ extract SFX: **selfExtractArchive**   (same as: selfExtractArchive -f "" -X "./"
 ```
 memory options:
   -s[-cacheSize]
-      DEFAULT -s-64m; oldPath loaded as Stream;
+      DEFAULT -s-4m; oldPath loaded as Stream;
       cacheSize can like 262144 or 256k or 512m or 2g etc....
       requires (cacheSize + 4*decompress buffer size)+O(1) bytes of memory.
       if diffFile is single compressed diffData, then requires
