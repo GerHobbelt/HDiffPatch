@@ -54,18 +54,25 @@
 #define _dec_memErr()       _hpatch_update_decError(decompressPlugin,hpatch_dec_mem_error)
 #define _dec_memErr_rt()    do { _dec_memErr(); return 0; } while(0)
 #define _dec_openErr_rt()   do { _hpatch_update_decError(decompressPlugin,hpatch_dec_open_error); return 0; } while(0)
-#define __dec_decErr()      _hpatch_update_decError(decompressPlugin,hpatch_dec_error)
-#define _dec_close_check(value) { if (!(value)) { LOG_ERR("check "#value " ERROR!\n"); result=hpatch_FALSE; __dec_decErr(); } }
+#define _dec_close_check(value) { if (!(value)) { LOG_ERR("check "#value " ERROR!\n"); \
+                                    result=hpatch_FALSE; _hpatch_update_decError(decompressPlugin,hpatch_dec_close_error); } }
 
-#define _dec_onDecErr_rt()  do { (self)->isDecError=hpatch_TRUE; return 0; } while(0)
-#define _dec_onDecErr_up()   do { if ((self)->isDecError) __dec_decErr(); } while(0)
+#define _dec_onDecErr_rt()  do { if (!(self)->decError) (self)->decError=hpatch_dec_error;  return 0; } while(0)
+#define _dec_onDecErr_up()  do { if ((self)->decError) _hpatch_update_decError(decompressPlugin,(self)->decError); } while(0)
 
 static void* _dec_malloc(hpatch_size_t size) {
     void* result=malloc(size);
     if (!result) LOG_ERRNO(errno);
     return result;
 }
+#define __dec_Alloc_fun(_type_TDecompress,p,size) {  \
+    void* result=_dec_malloc(size); \
+    if (!result)    \
+        ((_type_TDecompress*)p)->decError=hpatch_dec_mem_error;   \
+    return result;  }
 
+static void __dec_free(void* _, void* address){
+    if (address) free(address); }
 
 #ifdef  _CompressPlugin_zlib
 #if (_IsNeedIncludeDefaultCompressHead)
@@ -80,8 +87,10 @@ static void* _dec_malloc(hpatch_size_t size) {
         size_t          dec_buf_size;
         z_stream        d_stream;
         signed char     windowBits;
-        hpatch_BOOL     isDecError;
+        hpatch_dec_error_t  decError;
     } _zlib_TDecompress;
+    static void * __zlib_dec_Alloc(void* p,uInt items,uInt size) 
+        __dec_Alloc_fun(_zlib_TDecompress,p,((items)*(size_t)(size)))
     static hpatch_BOOL _zlib_is_can_open(const char* compressType){
         return (0==strcmp(compressType,"zlib"))||(0==strcmp(compressType,"pzlib"));
     }
@@ -114,9 +123,11 @@ static void* _dec_malloc(hpatch_size_t size) {
         self->code_begin=code_begin;
         self->code_end=code_end;
         self->windowBits=kWindowBits;
-        
+        self->d_stream.zalloc=__zlib_dec_Alloc;
+        self->d_stream.zfree=__dec_free;
+        self->d_stream.opaque=self;
         ret = inflateInit2(&self->d_stream,self->windowBits);
-        if (ret!=Z_OK) _dec_openErr_rt();
+        if (ret!=Z_OK) { _dec_onDecErr_up(); _dec_openErr_rt(); }
         return self;
     }
     static hpatch_decompressHandle  _zlib_decompress_open(hpatch_TDecompress* decompressPlugin,
@@ -258,7 +269,7 @@ static void* _dec_malloc(hpatch_size_t size) {
         hpatch_StreamPos_t code_end;
         
         bz_stream       d_stream;
-        hpatch_BOOL     isDecError;
+        hpatch_dec_error_t decError;
         unsigned char   dec_buf[kDecompressBufSize];
     } _bz2_TDecompress;
     static hpatch_BOOL _bz2_is_can_open(const char* compressType){
@@ -384,17 +395,11 @@ static void* _dec_malloc(hpatch_size_t size) {
 #       include "Lzma2Dec.h"
 #   endif
 #endif
-static void * __lzma_dec_Alloc(ISzAllocPtr p, size_t size){
-    return malloc(size);
-}
-static void __lzma_dec_Free(ISzAllocPtr p, void *address){
-    if (address) free(address);
-}
-static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
 #endif
 
 #ifdef _CompressPlugin_lzma
     typedef struct _lzma_TDecompress{
+        ISzAlloc           memAllocBase;
         const struct hpatch_TStreamInput* codeStream;
         hpatch_StreamPos_t code_begin;
         hpatch_StreamPos_t code_end;
@@ -402,10 +407,12 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         CLzmaDec        decEnv;
         SizeT           decCopyPos;
         SizeT           decReadPos;
-        hpatch_BOOL     isDecError;
-        hpatch_BOOL     isMemError;
+        hpatch_dec_error_t decError;
         unsigned char   dec_buf[kDecompressBufSize];
     } _lzma_TDecompress;
+    static void * __lzma1_dec_Alloc(ISzAllocPtr p, size_t size) 
+        __dec_Alloc_fun(_lzma_TDecompress,p,size)
+
     static hpatch_BOOL _lzma_is_can_open(const char* compressType){
         return (0==strcmp(compressType,"lzma"));
     }
@@ -430,6 +437,8 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         self=(_lzma_TDecompress*)_dec_malloc(sizeof(_lzma_TDecompress));
         if (!self) _dec_memErr_rt();
         memset(self,0,sizeof(_lzma_TDecompress)-kDecompressBufSize);
+        self->memAllocBase.Alloc=__lzma1_dec_Alloc;
+        *((void**)&self->memAllocBase.Free)=__dec_free;
         self->codeStream=codeStream;
         self->code_begin=code_begin;
         self->code_end=code_end;
@@ -438,8 +447,8 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         self->decReadPos=kDecompressBufSize;
         
         LzmaDec_Construct(&self->decEnv);
-        ret=LzmaDec_Allocate(&self->decEnv,props,propsSize,&__lzma_dec_alloc);
-        if (ret!=SZ_OK){ free(self); _dec_onMemErr_up(); _dec_openErr_rt(); }
+        ret=LzmaDec_Allocate(&self->decEnv,props,propsSize,&self->memAllocBase);
+        if (ret!=SZ_OK){ _dec_onDecErr_up(); free(self); _dec_openErr_rt(); }
         LzmaDec_Init(&self->decEnv);
         return self;
     }
@@ -447,8 +456,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
                                    hpatch_decompressHandle decompressHandle){
         _lzma_TDecompress* self=(_lzma_TDecompress*)decompressHandle;
         if (!self) return hpatch_TRUE;
-        LzmaDec_Free(&self->decEnv,&__lzma_dec_alloc);
-        _dec_onMemErr_up();
+        LzmaDec_Free(&self->decEnv,&self->memAllocBase);
         _dec_onDecErr_up();
         free(self);
         return hpatch_TRUE;
@@ -506,6 +514,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
 
 #ifdef _CompressPlugin_lzma2
     typedef struct _lzma2_TDecompress{
+        ISzAlloc           memAllocBase;
         const struct hpatch_TStreamInput* codeStream;
         hpatch_StreamPos_t code_begin;
         hpatch_StreamPos_t code_end;
@@ -513,10 +522,12 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         CLzma2Dec       decEnv;
         SizeT           decCopyPos;
         SizeT           decReadPos;
-        hpatch_BOOL     isDecError;
-        hpatch_BOOL     isMemError;
+        hpatch_dec_error_t decError;
         unsigned char   dec_buf[kDecompressBufSize];
     } _lzma2_TDecompress;
+    static void * __lzma2_dec_Alloc(ISzAllocPtr p, size_t size) 
+        __dec_Alloc_fun(_lzma2_TDecompress,p,size)
+    
     static hpatch_BOOL _lzma2_is_can_open(const char* compressType){
         return (0==strcmp(compressType,"lzma2"));
     }
@@ -536,6 +547,8 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         self=(_lzma2_TDecompress*)_dec_malloc(sizeof(_lzma2_TDecompress));
         if (!self) _dec_memErr_rt();
         memset(self,0,sizeof(_lzma2_TDecompress)-kDecompressBufSize);
+        self->memAllocBase.Alloc=__lzma2_dec_Alloc;
+        *((void**)&self->memAllocBase.Free)=__dec_free;
         self->codeStream=codeStream;
         self->code_begin=code_begin;
         self->code_end=code_end;
@@ -544,8 +557,8 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         self->decReadPos=kDecompressBufSize;
         
         Lzma2Dec_Construct(&self->decEnv);
-    ret=Lzma2Dec_Allocate(&self->decEnv,propsSize,&__lzma_dec_alloc);
-        if (ret!=SZ_OK){ free(self); _dec_onMemErr_up(); _dec_openErr_rt(); }
+        ret=Lzma2Dec_Allocate(&self->decEnv,propsSize,&self->memAllocBase);
+        if (ret!=SZ_OK){ _dec_onDecErr_up(); free(self); _dec_openErr_rt(); }
         Lzma2Dec_Init(&self->decEnv);
         return self;
     }
@@ -553,8 +566,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
                                     hpatch_decompressHandle decompressHandle){
         _lzma2_TDecompress* self=(_lzma2_TDecompress*)decompressHandle;
         if (!self) return hpatch_TRUE;
-    Lzma2Dec_Free(&self->decEnv,&__lzma_dec_alloc);
-        _dec_onMemErr_up();
+        Lzma2Dec_Free(&self->decEnv,&self->memAllocBase);
         _dec_onDecErr_up();
         free(self);
         return hpatch_TRUE;
@@ -625,7 +637,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         int                code_buf_size;
         int                data_begin;
         int                data_end;
-        hpatch_BOOL        isDecError;
+        hpatch_dec_error_t decError;
         unsigned char      buf[1];
     } _lz4_TDecompress;
     static hpatch_BOOL _lz4_is_can_open(const char* compressType){
@@ -715,6 +727,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
 
 #ifdef  _CompressPlugin_zstd
 #if (_IsNeedIncludeDefaultCompressHead)
+//#   define ZSTD_STATIC_LINKING_ONLY //for ZSTD_customMem
 #   include "zstd.h" // "zstd/lib/zstd.h" https://github.com/facebook/zstd
 #endif
     typedef struct _zstd_TDecompress{
@@ -726,9 +739,13 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         ZSTD_outBuffer     s_output;
         size_t             data_begin;
         ZSTD_DStream*      s;
-        hpatch_BOOL        isDecError;
+        hpatch_dec_error_t decError;
         unsigned char      buf[1];
     } _zstd_TDecompress;
+    #ifdef ZSTD_STATIC_LINKING_ONLY
+    static void* __ZSTD_alloc(void* opaque, size_t size)
+        __dec_Alloc_fun(_zstd_TDecompress,opaque,size)
+    #endif
     static hpatch_BOOL _zstd_is_can_open(const char* compressType){
         return (0==strcmp(compressType,"zstd"));
     }
@@ -755,11 +772,17 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         self->s_output.size=_output_size;
         self->s_output.pos=0;
         self->data_begin=0;
-        
-        self->s = ZSTD_createDStream();
-        if (!self->s){ free(self); _dec_openErr_rt(); }
+        #ifdef ZSTD_STATIC_LINKING_ONLY
+        {
+            ZSTD_customMem customMem={__ZSTD_alloc,__dec_free,self};
+            self->s=ZSTD_createDStream_advanced(customMem);
+        }
+        #else
+            self->s=ZSTD_createDStream();
+        #endif
+        if (!self->s){ _dec_onDecErr_up(); free(self); _dec_openErr_rt(); }
         ret=ZSTD_initDStream(self->s);
-        if (ZSTD_isError(ret)) { ZSTD_freeDStream(self->s); free(self); _dec_openErr_rt(); }
+        if (ZSTD_isError(ret)) { ZSTD_freeDStream(self->s); _dec_onDecErr_up(); free(self); _dec_openErr_rt(); }
         #define _ZSTD_WINDOWLOG_MAX ((sizeof(size_t)<=4)?30:31)
         ret=ZSTD_DCtx_setParameter(self->s,ZSTD_d_windowLogMax,_ZSTD_WINDOWLOG_MAX);
         //if (ZSTD_isError(ret)) { printf("WARNING: ZSTD_DCtx_setMaxWindowSize() error!"); }
@@ -831,7 +854,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         unsigned char*        next_out;
         unsigned char*        data_begin;
         BrotliDecoderState* s;
-        hpatch_BOOL         isDecError;
+        hpatch_dec_error_t  decError;
         unsigned char       buf[1];
     } _brotli_TDecompress;
     static hpatch_BOOL _brotli_is_can_open(const char* compressType){
@@ -941,7 +964,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         unsigned char*        next_out;
         unsigned char*        data_begin;
         lzham_decompress_state_ptr s;
-        hpatch_BOOL         isDecError;
+        hpatch_dec_error_t    decError;
         unsigned char       buf[1];
     } _lzham_TDecompress;
     static hpatch_BOOL _lzham_is_can_open(const char* compressType){
@@ -1063,7 +1086,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         hpatch_StreamPos_t code_end;
         tuz_byte*   dec_mem;
         tuz_TStream s;
-        hpatch_BOOL isDecError;
+        hpatch_dec_error_t decError;
     } _tuz_TDecompress;
 
     static tuz_BOOL _tuz_TDecompress_read_code(tuz_TInputStreamHandle listener,
@@ -1097,7 +1120,7 @@ static ISzAlloc __lzma_dec_alloc={__lzma_dec_Alloc,__lzma_dec_Free};
         self->codeStream=codeStream;
         self->code_begin=code_begin;
         self->code_end=code_end;
-        self->isDecError=hpatch_FALSE;
+        self->decError=hpatch_dec_ok;
         dictSize=tuz_TStream_read_dict_size(self,_tuz_TDecompress_read_code);
         if (((tuz_size_t)(dictSize-1))>=tuz_kMaxOfDictSize) { free(self); _dec_openErr_rt(); }
         self->dec_mem=(tuz_byte*)_dec_malloc(dictSize+kDecompressBufSize);

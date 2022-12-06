@@ -38,7 +38,7 @@ extern "C" {
 
 #define HDIFFPATCH_VERSION_MAJOR    4
 #define HDIFFPATCH_VERSION_MINOR    2
-#define HDIFFPATCH_VERSION_RELEASE  3
+#define HDIFFPATCH_VERSION_RELEASE  4
 
 #define _HDIFFPATCH_VERSION          HDIFFPATCH_VERSION_MAJOR.HDIFFPATCH_VERSION_MINOR.HDIFFPATCH_VERSION_RELEASE
 #define _HDIFFPATCH_QUOTE(str) #str
@@ -104,6 +104,9 @@ extern "C" {
 #   include <stdio.h>  //for stderr
 #   define LOG_ERR(...) fprintf(stderr,__VA_ARGS__)
 #endif
+#ifndef _HPATCH_IS_USED_errno
+#   define  _HPATCH_IS_USED_errno 1
+#endif
 #define _hpatch_import_system_tag "call import system api"
 #if (_HPATCH_IS_USED_errno)
 #   define  LOG_ERRNO(_err_no) \
@@ -164,6 +167,7 @@ extern "C" {
         hpatch_dec_mem_error,
         hpatch_dec_open_error,
         hpatch_dec_error,
+        hpatch_dec_close_error,
     } hpatch_dec_error_t;
     typedef struct hpatch_TDecompress{
         hpatch_BOOL        (*is_can_open)(const char* compresseType);
