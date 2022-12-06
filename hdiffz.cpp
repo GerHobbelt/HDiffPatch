@@ -447,8 +447,7 @@ static hpatch_BOOL _getIsBsDiffFile(const char* diffFileName) {
     hpatch_TFileStreamInput diffData;
     hpatch_TFileStreamInput_init(&diffData);
     if (!hpatch_TFileStreamInput_open(&diffData, diffFileName)) return hpatch_FALSE;
-    hpatch_BsDiffInfo diffInfo;
-    hpatch_BOOL result = getBsDiffInfo(&diffInfo, &diffData.base);
+    hpatch_BOOL result=getIsBsDiff(&diffData.base);
     if (!hpatch_TFileStreamInput_close(&diffData)) return hpatch_FALSE;
     return result;
 }
@@ -458,8 +457,7 @@ static hpatch_BOOL _getIsVcDiffFile(const char* diffFileName) {
     hpatch_TFileStreamInput diffData;
     hpatch_TFileStreamInput_init(&diffData);
     if (!hpatch_TFileStreamInput_open(&diffData, diffFileName)) return hpatch_FALSE;
-    hpatch_VcDiffInfo diffInfo;
-    hpatch_BOOL result = getVcDiffInfo(&diffInfo, &diffData.base);
+    hpatch_BOOL result=getIsVcDiff(&diffData.base);
     if (!hpatch_TFileStreamInput_close(&diffData)) return hpatch_FALSE;
     return result;
 }
@@ -1293,7 +1291,7 @@ static int hdiff_in_mem(const char* oldFileName,const char* newFileName,const ch
     printf("oldDataSize : %" PRIu64 "\nnewDataSize : %" PRIu64 "\n",
            (hpatch_StreamPos_t)oldMem.size(),(hpatch_StreamPos_t)newMem.size());
     if (diffSets.isDoDiff){
-        check(hpatch_TFileStreamOutput_open(&diffData_out,outDiffFileName,~(hpatch_StreamPos_t)0),
+        check(hpatch_TFileStreamOutput_open(&diffData_out,outDiffFileName,hpatch_kNullStreamPos),
                 HDIFF_OPENWRITE_ERROR,"open out diffFile");
         hpatch_TFileStreamOutput_setRandomOut(&diffData_out,hpatch_TRUE);
         try {
@@ -1352,9 +1350,6 @@ static int hdiff_in_mem(const char* oldFileName,const char* newFileName,const ch
         {
             hpatch_compressedDiffInfo diffinfo;
             hpatch_singleCompressedDiffInfo sdiffInfo;
-#if (_IS_NEED_BSDIFF)
-            hpatch_BsDiffInfo bsdiffInfo;
-#endif
 #if (_IS_NEED_VCDIFF)
             hpatch_VcDiffInfo vcdiffInfo;
 #endif
@@ -1367,14 +1362,14 @@ static int hdiff_in_mem(const char* oldFileName,const char* newFileName,const ch
                 if (!diffSets.isDoDiff)
                     printf("test single compressed diffData!\n");
 #if (_IS_NEED_BSDIFF)
-            }else if (getBsDiffInfo_mem(&bsdiffInfo,diffMem.data(),diffMem.data_end())){
+            }else if (getIsBsDiff_mem(diffMem.data(),diffMem.data_end())){
                 *saved_decompressPlugin=_bz2DecompressPlugin_unsz;
                 isBsDiff=hpatch_TRUE;
                 if (!diffSets.isDoDiff)
                     printf("test bsdiff's diffData!\n");
 #endif
 #if (_IS_NEED_VCDIFF)
-            }else if (getVcDiffInfo_mem(&vcdiffInfo,diffMem.data(),diffMem.data_end())){
+            }else if (getVcDiffInfo_mem(&vcdiffInfo,diffMem.data(),diffMem.data_end(),hpatch_FALSE)){
                 check(getVcDiffDecompressPlugin(saved_decompressPlugin,vcdiffInfo.compressorID),
                       HDIFF_PATCH_ERROR,"VCDIFF unsported compressorID");
                 isVcDiff=hpatch_TRUE;
@@ -1442,7 +1437,7 @@ static int hdiff_by_stream(const char* oldFileName,const char* newFileName,const
     printf("oldDataSize : %" PRIu64 "\nnewDataSize : %" PRIu64 "\n",
            oldData.base.streamSize,newData.base.streamSize);
     if (diffSets.isDoDiff){
-        check(hpatch_TFileStreamOutput_open(&diffData_out,outDiffFileName,~(hpatch_StreamPos_t)0),
+        check(hpatch_TFileStreamOutput_open(&diffData_out,outDiffFileName,hpatch_kNullStreamPos),
               HDIFF_OPENWRITE_ERROR,"open out diffFile");
         hpatch_TFileStreamOutput_setRandomOut(&diffData_out,hpatch_TRUE);
         try{
@@ -1496,9 +1491,6 @@ static int hdiff_by_stream(const char* oldFileName,const char* newFileName,const
         {
             hpatch_compressedDiffInfo diffInfo;
             hpatch_singleCompressedDiffInfo sdiffInfo;
-#if (_IS_NEED_BSDIFF)
-            hpatch_BsDiffInfo bsdiffInfo;
-#endif
 #if (_IS_NEED_VCDIFF)
             hpatch_VcDiffInfo vcdiffInfo;
 #endif
@@ -1511,14 +1503,14 @@ static int hdiff_by_stream(const char* oldFileName,const char* newFileName,const
                 if (!diffSets.isDoDiff)
                     printf("test single compressed diffData!\n");
 #if (_IS_NEED_BSDIFF)
-            }else if (getBsDiffInfo(&bsdiffInfo,&diffData_in.base)){
+            }else if (getIsBsDiff(&diffData_in.base)){
                 *saved_decompressPlugin=_bz2DecompressPlugin_unsz;
                 isBsDiff=hpatch_TRUE;
                 if (!diffSets.isDoDiff)
                     printf("test bsdiff's diffData!\n");
 #endif
 #if (_IS_NEED_VCDIFF)
-            }else if (getVcDiffInfo(&vcdiffInfo,&diffData_in.base)){
+            }else if (getVcDiffInfo(&vcdiffInfo,&diffData_in.base,hpatch_FALSE)){
                 check(getVcDiffDecompressPlugin(saved_decompressPlugin,vcdiffInfo.compressorID),
                       HDIFF_PATCH_ERROR,"VCDIFF unsported compressorID");
                 isVcDiff=hpatch_TRUE;
@@ -1680,7 +1672,7 @@ int hdiff_resave(const char* diffFileName,const char* outDiffFileName,
     }
 #endif
 
-    check(hpatch_TFileStreamOutput_open(&diffData_out,outDiffFileName,~(hpatch_StreamPos_t)0),HDIFF_OPENWRITE_ERROR,
+    check(hpatch_TFileStreamOutput_open(&diffData_out,outDiffFileName,hpatch_kNullStreamPos),HDIFF_OPENWRITE_ERROR,
           "open out diffFile");
     hpatch_TFileStreamOutput_setRandomOut(&diffData_out,hpatch_TRUE);
     printf("inDiffSize : %" PRIu64 "\n",diffData_in.base.streamSize);
@@ -1831,7 +1823,7 @@ int hdiff_dir(const char* _oldPath,const char* _newPath,const char* outDiffFileN
     if (diffSets.isDoDiff){
         double diff_time0=clock_s();
         try {
-            check(hpatch_TFileStreamOutput_open(&diffData_out,outDiffFileName,~(hpatch_StreamPos_t)0),
+            check(hpatch_TFileStreamOutput_open(&diffData_out,outDiffFileName,hpatch_kNullStreamPos),
                   HDIFF_OPENWRITE_ERROR,"open out diffFile");
             hpatch_TFileStreamOutput_setRandomOut(&diffData_out,hpatch_TRUE);
             DirDiffListener listener;
@@ -1916,7 +1908,7 @@ int create_manifest(const char* _inputPath,const char* outManifestFileName,
     {//create
         try {
             std::vector<std::string> emptyPathList;
-            check(hpatch_TFileStreamOutput_open(&manifestData_out,outManifestFileName,~(hpatch_StreamPos_t)0),
+            check(hpatch_TFileStreamOutput_open(&manifestData_out,outManifestFileName,hpatch_kNullStreamPos),
                   HDIFF_OPENWRITE_ERROR,"open out manifestFile");
             //hpatch_TFileStreamOutput_setRandomOut(&manifestData_out,hpatch_TRUE);
             DirPathIgnoreListener dirPathIgnore(ignorePathList,emptyPathList);
