@@ -34,11 +34,15 @@
 #include "../../dirDiffPatch/dir_diff/dir_diff_tools.h"
 #include "../sync_client/sync_client_type.h"
 #include "dict_compress_plugin.h"
+#include "hsynz_plugin.h"
 
 namespace sync_private{
-    
+
 void TNewDataSyncInfo_saveTo(TNewDataSyncInfo* self,const hpatch_TStreamOutput* out_stream,
-                             const hsync_TDictCompress* compressPlugin,hsync_dictCompressHandle dictHandle,size_t dictSize);
+                             const hsync_TDictCompress* compressPlugin);
+#if (_IS_NEED_DIR_DIFF_PATCH)
+void TNewDataSyncInfo_dirWithHead_saveTo(TNewDataSyncInfo_dir* self,std::vector<hpatch_byte>& out_buf);
+#endif
 
 class CNewDataSyncInfo :public TNewDataSyncInfo{
 public:
@@ -54,6 +58,8 @@ private:
     std::string                 _strongChecksumType;
     hdiff_private::TAutoMem     _mem;
 };
+
+void getHsynzPluginDefault(hsync_THsynz* out_hsynzPlugin);
 
 }//namespace sync_private
 #endif // hsync_info_make_h

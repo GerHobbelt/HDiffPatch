@@ -49,18 +49,35 @@ typedef struct TSameNewBlockPair{
     uint32_t  sameIndex; // sameIndex < curIndex;
 } TSameNewBlockPair;
 
-typedef struct TNewDataSyncInfo{
+
+#if (_IS_NEED_DIR_DIFF_PATCH)
+typedef struct{
+    size_t                  dir_newPathCount;
+    uint8_t                 dir_newNameList_isCString;
+    const void*             dir_utf8NewNameList;//is const char** or const std::string* type
+    const char*             dir_utf8NewRootPath;
+    hpatch_StreamPos_t*     dir_newSizeList;
+    size_t                  dir_newPathSumCharSize;
+    size_t                  dir_newExecuteCount;
+    size_t*                 dir_newExecuteIndexList;
+} TNewDataSyncInfo_dir;
+#endif
+
+typedef struct{
     const char*             compressType;
     const char*             strongChecksumType;
     size_t                  kStrongChecksumByteSize;
     size_t                  savedStrongChecksumByteSize;
     size_t                  savedRollHashByteSize;
+    size_t                  savedStrongChecksumBits;
+    size_t                  savedRollHashBits;
     size_t                  dictSize;
     uint32_t                kSyncBlockSize;
     uint32_t                samePairCount;
     uint8_t                 isDirSyncInfo;
     hpatch_StreamPos_t      newDataSize;      // newData version size;
     hpatch_StreamPos_t      newSyncDataSize;  // .hsynz size ,saved newData or complessed newData
+    hpatch_StreamPos_t      newSyncDataOffsert;
     hpatch_StreamPos_t      newSyncInfoSize;  // .hsyni size ,saved newData's info
     unsigned char*          savedNewDataCheckChecksum; // out new data's strongChecksum's checksum
     unsigned char*          infoFullChecksum; // this info data's strongChecksum
@@ -69,18 +86,15 @@ typedef struct TNewDataSyncInfo{
     uint8_t*                rollHashs;
     uint8_t*                partChecksums;
 #if (_IS_NEED_DIR_DIFF_PATCH)
-    size_t                  dir_newPathCount;
-    uint8_t                 dir_newNameList_isCString;
-    const void*             dir_utf8NewNameList;//is const char** or const std::string* type
-    const char*             dir_utf8NewRootPath;
-    hpatch_StreamPos_t*     dir_newSizeList;
-    size_t                  dir_newExecuteCount;
-    size_t*                 dir_newExecuteIndexList;
+    TNewDataSyncInfo_dir    dirInfo;
+    size_t                  dirInfoSavedSize;
 #endif
     hpatch_TChecksum*       _strongChecksumPlugin;
     hsync_TDictDecompress*  _decompressPlugin;
     void*                   _import;
 } TNewDataSyncInfo;
+
+#define _bitsToBytes(bits) (((bits)+7)>>3)
 
 struct TNeedSyncInfos;
 typedef void (*TSync_getBlockInfoByIndex)(const struct TNeedSyncInfos* needSyncInfos,uint32_t blockIndex,
