@@ -3,7 +3,7 @@
 //  Created by housisong on 2019-09-17.
 /*
  The MIT License (MIT)
- Copyright (c) 2019-2022 HouSisong
+ Copyright (c) 2019-2023 HouSisong
  
  Permission is hereby granted, free of charge, to any person
  obtaining a copy of this software and associated documentation
@@ -97,8 +97,10 @@ namespace sync_private{
             if ((curPair<samePairCount)&&(i==samePairList[curPair].curIndex))
                 { ++curPair; continue; }
             for (size_t j=0;j<partBytes;++j){
+                const size_t vbit=(j==0)?highBit:8;
+                assert(partHash[j]<(1<<vbit));
                 bitsValue|=(((size_t)partHash[j])<<bitsCount);
-                bitsCount+=((j==0)?highBit:8);
+                bitsCount+=vbit;
                 if (bitsCount>=8){
                     buf.push_back((hpatch_byte)bitsValue);
                     bitsValue>>=8;

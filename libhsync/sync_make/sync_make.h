@@ -3,7 +3,7 @@
 //  Created by housisong on 2019-09-17.
 /*
  The MIT License (MIT)
- Copyright (c) 2019-2022 HouSisong
+ Copyright (c) 2019-2023 HouSisong
  
  Permission is hereby granted, free of charge, to any person
  obtaining a copy of this software and associated documentation
@@ -35,7 +35,7 @@
 #include "hsynz_plugin.h"
 
 static const uint32_t kSyncBlockSize_default   = 1024*2;
-static const uint32_t kSyncBlockSize_min       = 64;
+static const uint32_t kSyncBlockSize_min       = 128;
 static const size_t kSafeHashClashBit_default = 24;
 
 //create out_hsyni

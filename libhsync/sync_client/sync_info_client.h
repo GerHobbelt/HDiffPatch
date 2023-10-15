@@ -3,7 +3,7 @@
 //  Created by housisong on 2019-09-18.
 /*
  The MIT License (MIT)
- Copyright (c) 2019-2020 HouSisong
+ Copyright (c) 2019-2023 HouSisong
  
  Permission is hereby granted, free of charge, to any person
  obtaining a copy of this software and associated documentation
@@ -42,50 +42,52 @@ typedef enum TSyncClient_resultType{
     kSyncClient_overwritePathError,         // 5
     kSyncClient_deleteFileError,
     kSyncClient_renameFileError,
-    kSyncClient_getSyncDownloadPluginError,
+
+    kSyncClient_getSyncDownloadPluginError=15,
     kSyncClient_newSyncInfoCreateError,
-    kSyncClient_newSyncInfoCloseError,      // 10
+    kSyncClient_newSyncInfoCloseError,
     kSyncClient_newSyncInfoDownloadError,
     kSyncClient_newSyncInfoOpenError,
-    kSyncClient_newSyncInfoDataError,
+    kSyncClient_newSyncInfoDataError,       // 20
     kSyncClient_newSyncInfoChecksumError,
-    kSyncClient_newSyncInfoTypeError,       // 15
+    kSyncClient_newSyncInfoTypeError,    
     kSyncClient_oldFileOpenError,
     kSyncClient_oldFileCloseError,
-    kSyncClient_readOldDataError,
+    kSyncClient_readOldDataError,           // 25
     kSyncClient_newFileCreateError,
-    kSyncClient_newFileReopenWriteError,    // 20
+    kSyncClient_newFileReopenWriteError,
     kSyncClient_newFileReopenReadError,
     kSyncClient_newFileCloseError,
-    kSyncClient_writeNewDataError,
+    kSyncClient_writeNewDataError,          // 30
     kSyncClient_matchNewDataInOldError,
-    kSyncClient_syncDataDownloadError,      // 25
+    kSyncClient_syncDataDownloadError,
     kSyncClient_syncDataCloseError,
     kSyncClient_readSyncDataBeginError,
-    kSyncClient_readSyncDataError,
+    kSyncClient_readSyncDataError,          // 35
     kSyncClient_noStrongChecksumPluginError,
-    kSyncClient_strongChecksumByteSizeError,// 30
+
+    kSyncClient_strongChecksumByteSizeError=40,
     kSyncClient_strongChecksumOpenError,
     kSyncClient_checksumSyncDataError,
-    kSyncClient_newDataCheckChecksumError,
+    kSyncClient_newDataCheckChecksumError,  // NOTE: safeBit not enough? You should re-download the original unabridged newData!
     kSyncClient_noDecompressPluginError,
-    kSyncClient_decompressOpenError,        // 35
+    kSyncClient_decompressOpenError,        // 45
     kSyncClient_decompressError,
     kSyncClient_newDataSizeError,
     kSyncClient_diffFileCreateError,
     kSyncClient_diffFileReopenWriteError,   
-    kSyncClient_diffFileCloseError,         // 40
+    kSyncClient_diffFileCloseError,         // 50
     kSyncClient_diffFileOpenError,
     kSyncClient_saveDiffError,             
     kSyncClient_loadDiffError,
     
     //_IS_NEED_DIR_DIFF_PATCH
-    kSyncClient_oldDirOpenError=50,
+    kSyncClient_oldDirOpenError=60,
     kSyncClient_oldDirFilesOpenError,
     kSyncClient_oldDirFilesCloseError,
     kSyncClient_savedNewDirInfoDataError,
     kSyncClient_newDirOpenInfoError,
-    kSyncClient_newDirOpenError,  // 55
+    kSyncClient_newDirOpenError,            // 65
     kSyncClient_newDirCloseError, 
     kSyncClient_newDirPatchBeginError,
     kSyncClient_newDirPatchFinishError,
@@ -101,18 +103,18 @@ typedef struct ISyncInfoListener{
     void                   (*needSyncInfo)        (ISyncInfoListener* listener,const TNeedSyncInfos* needSyncInfo);
 } ISyncInfoListener;
 
-int  TNewDataSyncInfo_open_by_file(TNewDataSyncInfo* self,const char* newSyncInfoFile,
-                                   ISyncInfoListener* listener);
-int  TNewDataSyncInfo_open        (TNewDataSyncInfo* self,const hpatch_TStreamInput* newSyncInfo,
-                                   ISyncInfoListener* listener);
-void TNewDataSyncInfo_close       (TNewDataSyncInfo* self);
+TSyncClient_resultType TNewDataSyncInfo_open_by_file(TNewDataSyncInfo* self,const char* newSyncInfoFile,
+                                                     ISyncInfoListener* listener);
+TSyncClient_resultType TNewDataSyncInfo_open(TNewDataSyncInfo* self,const hpatch_TStreamInput* newSyncInfo,
+                                             ISyncInfoListener* listener);
+void TNewDataSyncInfo_close(TNewDataSyncInfo* self);
 
-int  checkNewSyncInfoType_by_file(const char* newSyncInfoFile,hpatch_BOOL* out_newIsDir);
-int  checkNewSyncInfoType(const hpatch_TStreamInput* newSyncInfo,hpatch_BOOL* out_newIsDir);
+TSyncClient_resultType  checkNewSyncInfoType_by_file(const char* newSyncInfoFile,hpatch_BOOL* out_newIsDir);
+TSyncClient_resultType  checkNewSyncInfoType(const hpatch_TStreamInput* newSyncInfo,hpatch_BOOL* out_newIsDir);
 
 #if (_IS_NEED_DIR_DIFF_PATCH)
 void TNewDataSyncInfo_dir_saveTo(TNewDataSyncInfo_dir* self,std::vector<hpatch_byte>& out_buf);
-int  TNewDataSyncInfo_dir_load(TNewDataSyncInfo_dir* outDirInfo,const hpatch_byte* buf,size_t bufSize);
+TSyncClient_resultType TNewDataSyncInfo_dir_load(TNewDataSyncInfo_dir* outDirInfo,const hpatch_byte* buf,size_t bufSize);
 #endif
 
 #endif // sync_info_client_h
