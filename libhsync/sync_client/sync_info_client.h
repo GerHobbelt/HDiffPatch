@@ -73,7 +73,7 @@ typedef enum TSyncClient_resultType{
     kSyncClient_decompressError,
     kSyncClient_newDataSizeError,
     kSyncClient_diffFileCreateError,
-    kSyncClient_diffFileReopenWriteError,
+    kSyncClient_diffFileReopenWriteError,   
     kSyncClient_diffFileCloseError,         // 40
     kSyncClient_diffFileOpenError,
     kSyncClient_saveDiffError,             

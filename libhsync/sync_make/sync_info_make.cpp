@@ -56,14 +56,13 @@ namespace sync_private{
         }
     }
     
-    static void _compressBuf(std::vector<TByte> &buf, const hsync_TDictCompress *compressPlugin) {
+    static void _compressBuf(std::vector<TByte> &buf,hsync_TDictCompress* compressPlugin) {
         std::vector<TByte> cmbuf;
         cmbuf.resize((size_t)compressPlugin->maxCompressedSize(buf.size()));
-        hsync_dictCompressHandle  compressHandle=compressPlugin->dictCompressOpen(compressPlugin);
+        hsync_dictCompressHandle  compressHandle=compressPlugin->dictCompressOpen(compressPlugin,1,buf.size());
         checkv(compressHandle!=0);
-        size_t compressedSize=compressPlugin->dictCompress(compressHandle,cmbuf.data(),cmbuf.data()+cmbuf.size(),
-                                                           buf.data(),buf.data(),buf.data()+buf.size(),
-                                                           hpatch_TRUE,hpatch_TRUE);
+        size_t compressedSize=compressPlugin->dictCompress(compressHandle,0,cmbuf.data(),cmbuf.data()+cmbuf.size(),
+                                                           buf.data(),buf.data()+buf.size());
         checkv(compressedSize!=kDictCompressError);
         if ((compressedSize==kDictCompressCancel)||(compressedSize>=buf.size()))
             compressedSize=0; //cancel compress
@@ -125,7 +124,7 @@ void TNewDataSyncInfo_dirWithHead_saveTo(TNewDataSyncInfo_dir* self,std::vector<
 #endif
 
 void TNewDataSyncInfo_saveTo(TNewDataSyncInfo* self,const hpatch_TStreamOutput* out_stream,
-                             const hsync_TDictCompress* compressPlugin){
+                             hsync_TDictCompress* compressPlugin){
 #if (_IS_NEED_DIR_DIFF_PATCH)
     if (self->isDirSyncInfo)
         checkv(self->dirInfoSavedSize>0);
@@ -164,6 +163,8 @@ void TNewDataSyncInfo_saveTo(TNewDataSyncInfo* self,const hpatch_TStreamOutput* 
     {//head
         pushTypes(head,kVersionType,compressPlugin?compressPlugin->compressType():0,strongChecksumPlugin);
         packUInt(head,self->dictSize);
+        packUInt(head,self->decompressInfoSize);
+        pushBack(head,self->decompressInfo,self->decompressInfoSize);
         packUInt(head,self->newSyncDataSize);
         packUInt(head,self->newSyncDataOffsert);
         packUInt(head,self->newDataSize);
@@ -186,7 +187,7 @@ void TNewDataSyncInfo_saveTo(TNewDataSyncInfo* self,const hpatch_TStreamOutput* 
 #endif
         
         {//newSyncInfoSize
-            const size_t savedBCount=kBlockCount-self->samePairCount;
+            const hpatch_StreamPos_t savedBCount=kBlockCount-self->samePairCount;
             self->newSyncInfoSize = head.size()+privateExternDataSize+externDataSize+buf.size();
             self->newSyncInfoSize +=_bitsToBytes(self->savedRollHashBits*savedBCount)
                                     +_bitsToBytes(self->savedStrongChecksumBits*savedBCount);
