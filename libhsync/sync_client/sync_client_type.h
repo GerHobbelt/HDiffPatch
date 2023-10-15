@@ -41,6 +41,8 @@ static const size_t kDecompressInfoMaxSize = 32;
 static const size_t _kNeedMinRollHashBits   = 8;
 static const size_t _kNeedMinStrongHashBits = 16;
 static const size_t kSafeHashClashBit_min   = 14; //for safe
+static const uint32_t _kSyncBlockSize_min_limit = 64;
+static const uint32_t _kStrongChecksumByteSize_max_limit=1024*64/8;
 
 hpatch_inline static
 hpatch_StreamPos_t getSyncBlockCount(hpatch_StreamPos_t newDataSize,uint32_t kSyncBlockSize){
@@ -128,6 +130,8 @@ size_t TNeedSyncInfos_getRangeCount(const TNeedSyncInfos* nsi,
 
 typedef struct IReadSyncDataListener{
     void*       readSyncDataImport;
+    //onNeedSyncInfo can null
+    void        (*onNeedSyncInfo)   (struct  IReadSyncDataListener* listener,const TNeedSyncInfos* needSyncInfo);
     //readSyncDataBegin can null
     hpatch_BOOL (*readSyncDataBegin)(struct  IReadSyncDataListener* listener,const TNeedSyncInfos* needSyncInfo,
                                      uint32_t blockIndex,hpatch_StreamPos_t posInNewSyncData,hpatch_StreamPos_t posInNeedSyncData);
