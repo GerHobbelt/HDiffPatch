@@ -86,39 +86,44 @@ size_t checkChecksumBufByteSize(size_t kStrongChecksumByteSize){
 static hpatch_inline
 void checkChecksumInit(unsigned char* checkChecksumBuf,size_t kStrongChecksumByteSize){
         assert(kStrongChecksumByteSize>0);
-        memset(checkChecksumBuf+kStrongChecksumByteSize,0,kStrongChecksumByteSize*2); }
+        memset(checkChecksumBuf+kStrongChecksumByteSize,0,
+                    checkChecksumBufByteSize(kStrongChecksumByteSize)-kStrongChecksumByteSize); }
 
-    static hpatch_inline
-    uint32_t _readUInt32(const unsigned char* src){ return src[0] | (src[1]<<8) | (src[2]<<16)| (src[3]<<24); }
     static hpatch_inline
     void _writeUInt32(unsigned char* dst,uint32_t v){
         dst[0]=(unsigned char)v;       dst[1]=(unsigned char)(v>>8);
         dst[2]=(unsigned char)(v>>16); dst[3]=(unsigned char)(v>>24); }
+
 static hpatch_inline
 void checkChecksumAppendData(unsigned char* checkChecksumBuf,uint32_t checksumIndex,
+                             hpatch_TChecksum* checkChecksumPlugin,hpatch_checksumHandle checkChecksum,
                              const unsigned char* strongChecksum,size_t kStrongChecksumByteSize){
     unsigned char* d_xor=checkChecksumBuf+kStrongChecksumByteSize;
     unsigned char* d_xor_end=d_xor+kStrongChecksumByteSize;
-    unsigned char* d_sum=d_xor_end;
-    for (;d_xor<d_xor_end;d_sum+=sizeof(uint32_t),strongChecksum+=sizeof(uint32_t),
-                          checksumIndex<<=1,d_xor+=sizeof(uint32_t)){
-        uint32_t src_v = _readUInt32(strongChecksum);
-        _writeUInt32(d_xor,_readUInt32(d_xor) ^ (src_v+checksumIndex));
-        _writeUInt32(d_sum,_readUInt32(d_sum) + (src_v^checksumIndex));
+    unsigned char* _ccBuf=checkChecksumBuf+kStrongChecksumByteSize*2;
+
+    unsigned char _checksumIndex[4*3];
+    _writeUInt32(&_checksumIndex[0],checksumIndex);
+    const uint64_t _fchecksum=fast_adler64_start(&_checksumIndex[0],4);
+    _writeUInt32(&_checksumIndex[4],(uint32_t)_fchecksum);
+    _writeUInt32(&_checksumIndex[4*2],(uint32_t)(_fchecksum>>32));
+
+    checkChecksumPlugin->begin(checkChecksum);
+    checkChecksumPlugin->append(checkChecksum,&_checksumIndex[0],(&_checksumIndex[0])+4*3);
+    checkChecksumPlugin->append(checkChecksum,strongChecksum,strongChecksum+kStrongChecksumByteSize);
+    checkChecksumPlugin->end(checkChecksum,_ccBuf,_ccBuf+kStrongChecksumByteSize);
+
+    while (d_xor<d_xor_end){
+        (*d_xor++)^=*_ccBuf++;
     }
 }
 static hpatch_inline
 void checkChecksumEndTo(unsigned char* dst,
                         const unsigned char* checkChecksumBuf,size_t kStrongChecksumByteSize){
-    typedef hpatch_byte TXorType;
     const unsigned char* d_xor=checkChecksumBuf+kStrongChecksumByteSize;
     const unsigned char* d_xor_end=d_xor+kStrongChecksumByteSize;
-    const unsigned char* sum_r=d_xor_end+kStrongChecksumByteSize-sizeof(TXorType);
-    for (;d_xor<d_xor_end;dst+=sizeof(TXorType),sum_r-=sizeof(TXorType),d_xor+=sizeof(TXorType)){
-        TXorType xor_v; memcpy(&xor_v,d_xor,sizeof(TXorType));
-        TXorType sum_v; memcpy(&sum_v,sum_r,sizeof(TXorType));
-        xor_v^=sum_v;
-        memcpy(dst,&xor_v,sizeof(TXorType));
+    while (d_xor<d_xor_end){
+        *dst++=(*d_xor++);
     }
 }
 static hpatch_inline

@@ -41,7 +41,6 @@ namespace sync_private{
 
 typedef unsigned char TByte;
 typedef uint64_t tm_roll_uint;
-const size_t kBestClipSize=256*1024;
 
 struct TIndex_comp0{
     inline explicit TIndex_comp0(const uint8_t* _hashs,size_t _byteSize)
@@ -107,6 +106,8 @@ struct TOldDataCache_base {
 
         m_checksumHandle=strongChecksumPlugin->open(strongChecksumPlugin);
         checkv(m_checksumHandle!=0);
+        m_checkChecksum=strongChecksumPlugin->open(strongChecksumPlugin);
+        checkv(m_checkChecksum!=0);
         m_checksumByteSize=(uint32_t)m_strongChecksumPlugin->checksumByteSize();
         m_cache.realloc(cacheSize+m_checksumByteSize+m_checksumByteSize);
         m_cache.reduceSize(cacheSize);
@@ -117,6 +118,8 @@ struct TOldDataCache_base {
     ~TOldDataCache_base(){
         if (m_checksumHandle)
             m_strongChecksumPlugin->close(m_strongChecksumPlugin,m_checksumHandle);
+        if (m_checkChecksum)
+            m_strongChecksumPlugin->close(m_strongChecksumPlugin,m_checkChecksum);
     }
     inline hpatch_StreamPos_t oldRollPosEnd()const{ return m_oldRollEnd+m_kSyncBlockSize-1; }
     // all:[          oldDataSize         +     backZeroLen    ]
@@ -161,6 +164,8 @@ struct TOldDataCache_base {
     inline const TByte* strongChecksum()const{//must after do calcPartStrongChecksum()
         return m_strongChecksum_buf+m_checksumByteSize; }
     inline size_t strongChecksumByteSize()const{ return m_checksumByteSize; }
+    inline hpatch_TChecksum* strongChecksumPlugin()const{ return m_strongChecksumPlugin; }
+    inline hpatch_checksumHandle checkChecksum()const{ return m_checkChecksum; }
     inline hpatch_StreamPos_t curOldPos()const{ return m_readedPos-(m_cache.data_end()-m_cur); }
 protected:
     const hpatch_TStreamInput* m_oldStream;
@@ -173,6 +178,7 @@ protected:
     uint32_t                m_checksumByteSize;
     hpatch_TChecksum*       m_strongChecksumPlugin;
     hpatch_checksumHandle   m_checksumHandle;
+    hpatch_checksumHandle   m_checkChecksum;
     void*                   m_mt;
 
     inline const TByte* _calcPartStrongChecksum(const TByte* buf,size_t bufSize,size_t outPartBits){
@@ -192,25 +198,25 @@ struct TOldDataCache:public TOldDataCache_base {
             :TOldDataCache_base(oldStream,oldRollBegin,oldRollEnd,kSyncBlockSize,
                                 strongChecksumPlugin,_mt){
                 if (isEnd()) return;
-                m_roolHash=roll_hash_start((tm_roll_uint*)0,m_cur,m_kSyncBlockSize);
+                m_rollHash=roll_hash_start((tm_roll_uint*)0,m_cur,m_kSyncBlockSize);
             }
     void _cache(){
         TOldDataCache_base::_cache();
         if (isEnd()) return;
         roll();
     }
-    inline tm_roll_uint hashValue()const{ return m_roolHash; }
+    inline tm_roll_uint hashValue()const{ return m_rollHash; }
     inline void roll(){
         const TByte* curIn=m_cur+m_kSyncBlockSize;
         if (curIn!=m_cache.data_end()){
-            m_roolHash=roll_hash_roll(m_roolHash,m_kSyncBlockSize,*m_cur,*curIn);
+            m_rollHash=roll_hash_roll(m_rollHash,m_kSyncBlockSize,*m_cur,*curIn);
             ++m_cur;
         }else{
             _cache();
         }
     }
 protected:
-    tm_roll_uint            m_roolHash;
+    tm_roll_uint            m_rollHash;
 };
 
 static void matchRange(hpatch_StreamPos_t* out_newBlockDataInOldPoss,
@@ -230,6 +236,7 @@ static void matchRange(hpatch_StreamPos_t* out_newBlockDataInOldPoss,
                 hpatch_StreamPos_t curPos=oldData.curOldPos();
                 out_newBlockDataInOldPoss[newBlockIndex]=curPos;
                 checkChecksumAppendData(newDataCheckChecksum,newBlockIndex,
+                                        oldData.strongChecksumPlugin(),oldData.checkChecksum(),
                                         oldData.strongChecksum(),oldData.strongChecksumByteSize());
                 //continue;
             }else{
