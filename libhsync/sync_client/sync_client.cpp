@@ -78,6 +78,7 @@ struct _TWriteDatas {
     hpatch_StreamPos_t          outDiffDataPos;
     const hpatch_TStreamInput*  oldStream;
     const TNewDataSyncInfo*     newSyncInfo;
+    const TNeedSyncInfos*       needSyncInfo;
     const hpatch_StreamPos_t*   newBlockDataInOldPoss;
     TSyncDiffData*              continueDiffData;
     uint32_t                    needSyncBlockCount;
@@ -104,7 +105,7 @@ struct _TWriteDatas {
                     newSyncInfo->savedStrongChecksumByteSize),kSyncClient_checksumSyncDataError);    \
 }
 
-static TSyncClient_resultType writeToNewOrDiff(_TWriteDatas& wd) {
+static TSyncClient_resultType writeToNewOrDiff(_TWriteDatas& wd,bool& isNeed_readSyncDataEnd) {
     const TNewDataSyncInfo* newSyncInfo=wd.newSyncInfo;
     IReadSyncDataListener*  syncDataListener=wd.syncDataListener;
     hpatch_TChecksum*       strongChecksumPlugin=wd.strongChecksumPlugin;
@@ -126,12 +127,12 @@ static TSyncClient_resultType writeToNewOrDiff(_TWriteDatas& wd) {
     size_t lastCompressedIndex=_indexOfCompressedSyncBlock(newSyncInfo,wd.newBlockDataInOldPoss,0);
      if (lastCompressedIndex>=kBlockCount)
         wd.decompressPlugin=0;
-    const size_t _memSize=kSyncBlockSize*(wd.decompressPlugin?3:1)
+    const size_t _memSize=(size_t)kSyncBlockSize*(wd.decompressPlugin?3:1)
                         +newSyncInfo->kStrongChecksumByteSize
                         +checkChecksumBufByteSize(newSyncInfo->kStrongChecksumByteSize);
     _memBuf=(TByte*)malloc(_memSize);
     check(_memBuf!=0,kSyncClient_memError);
-    checksumSync_buf=_memBuf+kSyncBlockSize*(wd.decompressPlugin?3:1);
+    checksumSync_buf=_memBuf+(size_t)kSyncBlockSize*(wd.decompressPlugin?3:1);
     {//checksum newSyncData
         checksumSync=strongChecksumPlugin->open(strongChecksumPlugin);
         check(checksumSync!=0,kSyncClient_strongChecksumOpenError);
@@ -147,7 +148,7 @@ static TSyncClient_resultType writeToNewOrDiff(_TWriteDatas& wd) {
         const bool isCompressedBlock=TNewDataSyncInfo_syncBlockIsCompressed(newSyncInfo,i);
         syncSize=TNewDataSyncInfo_syncBlockSize(newSyncInfo,i);
         newDataSize=TNewDataSyncInfo_newDataBlockSize(newSyncInfo,i);
-        check(syncSize<=kSyncBlockSize*2,kSyncClient_newSyncInfoDataError);
+        check(syncSize<=(size_t)kSyncBlockSize*2,kSyncClient_newSyncInfoDataError);
         const hpatch_StreamPos_t curSyncPos=wd.newBlockDataInOldPoss[i];
         isNeedSync=(curSyncPos==kBlockType_needSync);
         if (isOnNewDataContinue&&(outNewDataPos+newDataSize>wd.newDataContinue->streamSize))
@@ -164,6 +165,13 @@ static TSyncClient_resultType writeToNewOrDiff(_TWriteDatas& wd) {
                         isOnDiffContinue=false; // swap to download
                 }
                 if (!isOnDiffContinue){ //downloaded data or read from diff data
+                    if (!isNeed_readSyncDataEnd){
+                        isNeed_readSyncDataEnd=true;
+                        if (syncDataListener->readSyncDataBegin)
+                            check(syncDataListener->readSyncDataBegin(syncDataListener,wd.needSyncInfo,
+                                                                      i,posInNewSyncData,posInNeedSyncData),
+                                  kSyncClient_readSyncDataBeginError);
+                    }
                     check(syncDataListener->readSyncData(syncDataListener,i,posInNewSyncData,
                                                          posInNeedSyncData,buf,syncSize),
                           kSyncClient_readSyncDataError);
@@ -281,6 +289,10 @@ TSyncClient_resultType
     TSyncClient_resultType result=kSyncClient_ok;
     int _inClear=0;
     TSyncDiffData continueDiffData; memset(&continueDiffData,0,sizeof(continueDiffData));
+    const bool isNeedOut=(out_newStream!=0)||((out_diffStream!=0)&&(diffType!=kSyncDiff_info));
+    bool isLoadedOldPoss=false;
+    bool isReMatchInOld=false;
+    bool isNeed_readSyncDataEnd=false;
     
     //decompressPlugin
     if (newSyncInfo->compressType){
@@ -312,8 +324,6 @@ TSyncClient_resultType
     check(newBlockDataInOldPoss!=0,kSyncClient_memError);
     for (uint32_t i=0; i<kBlockCount; ++i)
         newBlockDataInOldPoss[i]=kBlockType_needSync;
-    bool isLoadedOldPoss=false;
-    bool isReMatchInOld=false;
     if (diffData!=0){ //local patch
         assert(syncDataListener==0);
         assert(diffContinue==0);
@@ -370,11 +380,6 @@ TSyncClient_resultType
     if (listener->needSyncInfo)
         listener->needSyncInfo(listener,&needSyncInfo);
     
-    if (syncDataListener->readSyncDataBegin)
-        check(syncDataListener->readSyncDataBegin(syncDataListener,&needSyncInfo),
-              kSyncClient_readSyncDataBeginError);
-
-    const bool isNeedOut=(out_newStream!=0)||((out_diffStream!=0)&&(diffType!=kSyncDiff_info));
     if (isNeedOut) 
         check(syncDataListener->readSyncData!=0,kSyncClient_noReadSyncDataError);
     if (isNeedOut){
@@ -385,6 +390,7 @@ TSyncClient_resultType
         writeDatas.outDiffDataPos=outDiffDataPos;
         writeDatas.oldStream=oldStream;
         writeDatas.newSyncInfo=newSyncInfo;
+        writeDatas.needSyncInfo=&needSyncInfo;
         writeDatas.newBlockDataInOldPoss=newBlockDataInOldPoss;
         writeDatas.needSyncBlockCount=needSyncInfo.needSyncBlockCount;
         writeDatas.decompressPlugin=decompressPlugin;
@@ -393,7 +399,7 @@ TSyncClient_resultType
         writeDatas.syncDataListener=syncDataListener;
         writeDatas.continueDiffData=diffContinue?&continueDiffData:0;
         writeDatas.isLocalPatch=(diffData!=0);
-        result=writeToNewOrDiff(writeDatas);
+        result=writeToNewOrDiff(writeDatas,isNeed_readSyncDataEnd);
         
         if (/*(*/result==kSyncClient_ok/*)&&out_newStream*/){
             checkChecksumEndTo(newSyncInfo->savedNewDataCheckChecksum+newSyncInfo->kStrongChecksumByteSize,
@@ -404,10 +410,10 @@ TSyncClient_resultType
         }
     }
     
-    if (syncDataListener->readSyncDataEnd)
-        syncDataListener->readSyncDataEnd(syncDataListener);
 clear:
     _inClear=1;
+    if (isNeed_readSyncDataEnd&&(syncDataListener->readSyncDataEnd))
+        syncDataListener->readSyncDataEnd(syncDataListener);
     if (checkChecksum) strongChecksumPlugin->close(strongChecksumPlugin,checkChecksum);
     if (newBlockDataInOldPoss) free(newBlockDataInOldPoss);
     return result;
@@ -455,8 +461,51 @@ clear:
     return result;
 }
 
+    struct _TRange{
+        hpatch_StreamPos_t first;
+        hpatch_StreamPos_t second;
+    };
+    static const hpatch_StreamPos_t kEmptyEndPos=~(hpatch_StreamPos_t)0;
+    static inline bool _isCanCombine(const _TRange& back_range,hpatch_StreamPos_t rangeBegin){
+        return ((rangeBegin>0)&(back_range.second+1==rangeBegin));
+    }
+    static inline void _setRange(_TRange& next_ranges,hpatch_StreamPos_t rangeBegin,hpatch_StreamPos_t rangeEnd){
+        assert(rangeBegin<rangeEnd);
+        hpatch_StreamPos_t rangLast=(rangeEnd!=kEmptyEndPos)?(rangeEnd-1):kEmptyEndPos;
+        next_ranges.first=rangeBegin;
+        next_ranges.second=rangLast;
+    }
+
 } //namespace sync_private
 using namespace  sync_private;
+
+size_t TNeedSyncInfos_getNextRanges(const TNeedSyncInfos* nsi,hpatch_StreamPos_t* _dstRanges,size_t maxGetRangeLen,
+                                    uint32_t* _curBlockIndex,hpatch_StreamPos_t* _curPosInNewSyncData){
+    _TRange* out_ranges=(_TRange*)_dstRanges;
+    _TRange  backRange={0,0};
+    uint32_t& blockIndex=*_curBlockIndex;
+    hpatch_StreamPos_t& posInNewSyncData=*_curPosInNewSyncData;
+    size_t result=0;
+    while (blockIndex<nsi->blockCount){
+        hpatch_BOOL isNeedSync;
+        uint32_t    syncSize;
+        nsi->getBlockInfoByIndex(nsi,blockIndex,&isNeedSync,&syncSize);
+        if (isNeedSync){
+            if ((result>0)&&_isCanCombine(backRange,posInNewSyncData)){
+                backRange.second+=syncSize;
+            }else if (result>=maxGetRangeLen){
+                break; //finish
+            }else{
+                _setRange(backRange,posInNewSyncData,posInNewSyncData+syncSize);
+                ++result;
+            }
+            if (out_ranges) out_ranges[result-1]=backRange;
+        }
+        posInNewSyncData+=syncSize;
+        ++blockIndex;
+    }
+    return result;
+}
 
 TSyncClient_resultType sync_patch(ISyncInfoListener* listener,IReadSyncDataListener* syncDataListener,
                                   const hpatch_TStreamInput* oldStream,const TNewDataSyncInfo* newSyncInfo,
@@ -502,7 +551,7 @@ TSyncClient_resultType sync_patch_file2file(ISyncInfoListener* listener,IReadSyn
         if (isOutDiffContinue) diffContinue=&_diffContinue;
     }
 
-    return _sync_patch_file2file(listener,syncDataListener,0,oldFile,newSyncInfoFile,
+    result=_sync_patch_file2file(listener,syncDataListener,0,oldFile,newSyncInfoFile,
                                  outNewFile,isOutNewContinue,
                                  cacheDiffInfoFile?&out_diffInfo.base:0,kSyncDiff_info,diffContinue,threadNum);
 clear:
