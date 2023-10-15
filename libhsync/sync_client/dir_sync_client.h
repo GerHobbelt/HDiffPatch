@@ -39,15 +39,16 @@
 TSyncClient_resultType sync_patch_2file(ISyncInfoListener* listener,IReadSyncDataListener* syncDataListener,
                                         const TManifest& oldManifest,const char* newSyncInfoFile,
                                         const char* outNewFile,hpatch_BOOL isOutNewContinue,
-                                        size_t kMaxOpenFileNumber,int threadNum);
+                                        const char* cacheDiffInfoFile,size_t kMaxOpenFileNumber,int threadNum);
 
 //sync_patch can split to two steps: sync_local_diff + sync_local_patch
 
 //download diff data from syncDataListener to outDiffFile
 //  if (isOutDiffContinue) then continue download
 TSyncClient_resultType sync_local_diff_2file(ISyncInfoListener* listener,IReadSyncDataListener* syncDataListener,
-                                             const TManifest& oldManifest,const char* newSyncInfoFile,const char* outDiffFile,
-                                             hpatch_BOOL isOutDiffContinue,size_t kMaxOpenFileNumber,int threadNum);
+                                             const TManifest& oldManifest,const char* newSyncInfoFile,
+                                             const char* outDiffFile,TSyncDiffType diffType,hpatch_BOOL isOutDiffContinue,
+                                             size_t kMaxOpenFileNumber,int threadNum);
 
 //patch(oldManifest+inDiffFile) to outNewFile
 TSyncClient_resultType sync_local_patch_2file(ISyncInfoListener* listener,const char* inDiffFile,
@@ -64,17 +65,18 @@ struct IDirSyncPatchListener:public ISyncInfoListener{
 TSyncClient_resultType sync_patch_2dir(IDirPatchListener* patchListener,IDirSyncPatchListener* syncListener,
                                        IReadSyncDataListener* syncDataListener,
                                        const TManifest& oldManifest,const char* newSyncInfoFile,const char* outNewDir,
-                                       size_t kMaxOpenFileNumber,int threadNum);
+                                       const char* cacheDiffInfoFile,size_t kMaxOpenFileNumber,int threadNum);
 
 //download diff data from syncDataListener to outDiffFile
 //  if (isOutDiffContinue) then continue download
 static hpatch_inline
 TSyncClient_resultType sync_local_diff_2dir(IDirPatchListener*,IDirSyncPatchListener* syncListener,
                                             IReadSyncDataListener* syncDataListener,
-                                            const TManifest& oldManifest,const char* newSyncInfoFile,const char* outDiffFile,
-                                            hpatch_BOOL isOutDiffContinue,size_t kMaxOpenFileNumber,int threadNum){
-            return sync_local_diff_2file(syncListener,syncDataListener,oldManifest,newSyncInfoFile,outDiffFile,
-                                         isOutDiffContinue,kMaxOpenFileNumber,threadNum); }
+                                            const TManifest& oldManifest,const char* newSyncInfoFile,
+                                            const char* outDiffFile,TSyncDiffType diffType,hpatch_BOOL isOutDiffContinue,
+                                            size_t kMaxOpenFileNumber,int threadNum){
+            return sync_local_diff_2file(syncListener,syncDataListener,oldManifest,newSyncInfoFile,
+                                         outDiffFile,diffType,isOutDiffContinue,kMaxOpenFileNumber,threadNum); }
 
 //patch(oldManifest+inDiffFile) to outNewDir
 TSyncClient_resultType sync_local_patch_2dir(IDirPatchListener* patchListener,IDirSyncPatchListener* syncListener,

@@ -111,10 +111,10 @@ typedef struct TNeedSyncInfos{
     hpatch_StreamPos_t          newSyncDataSize; // new data size or .hsynz file size
     hpatch_StreamPos_t          newSyncInfoSize; // .hsyni file size
     hpatch_StreamPos_t          localDiffDataSize; // local diff data
+    hpatch_StreamPos_t          needSyncSumSize; // all need download from new data or .hsynz file
     uint32_t                    kSyncBlockSize;
     uint32_t                    blockCount;
     uint32_t                    needSyncBlockCount;
-    hpatch_StreamPos_t          needSyncSumSize; // all need download from new data or .hsynz file
     TSync_getBlockInfoByIndex   getBlockInfoByIndex;
     void*                       import; //private
 } TNeedSyncInfos;
@@ -126,19 +126,26 @@ typedef struct IReadSyncDataListener{
     //download range data
     hpatch_BOOL (*readSyncData)     (IReadSyncDataListener* listener,uint32_t blockIndex,
                                      hpatch_StreamPos_t posInNewSyncData,hpatch_StreamPos_t posInNeedSyncData,
-                                     uint32_t syncDataSize,unsigned char* out_syncDataBuf);
+                                     unsigned char* out_syncDataBuf,uint32_t syncDataSize);
     //readSyncDataEnd can null
     void        (*readSyncDataEnd)  (IReadSyncDataListener* listener);
 } IReadSyncDataListener;
 
 typedef struct TSyncDownloadPlugin{
-    //download part of file
-    hpatch_BOOL (*download_part_open) (IReadSyncDataListener* out_listener,const char* file_url);
-    hpatch_BOOL (*download_part_close)(IReadSyncDataListener* listener);
+    //download range of file
+    hpatch_BOOL (*download_range_open) (IReadSyncDataListener* out_listener,const char* file_url);
+    hpatch_BOOL (*download_range_close)(IReadSyncDataListener* listener);
     //download file
     hpatch_BOOL (*download_file)      (const char* file_url,const hpatch_TStreamOutput* out_stream,
                                        hpatch_StreamPos_t continueDownloadPos);
 } TSyncDownloadPlugin;
+
+typedef enum TSyncDiffType{
+    kSyncDiff_default=0, // out diff (info+data)
+    kSyncDiff_info,      // out diff info, for optimize continue speed
+    kSyncDiff_data,      // out diff data, for test download file size; NOTE: now only support run with single thread
+} TSyncDiffType;
+#define _kSyncDiff_TYPE_MAX_ kSyncDiff_data
 
 #ifdef __cplusplus
 }
