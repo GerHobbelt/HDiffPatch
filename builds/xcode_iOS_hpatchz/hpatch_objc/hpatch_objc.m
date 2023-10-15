@@ -1,11 +1,11 @@
 //
-//  hpatchz_objc.m
+//  hpatch_objc.m
 //  hpatchz
 //
 //  Created by hss on 2023-08-25.
 //
 
-#import "hpatchz_objc.h"
+#import "hpatch_objc.h"
 #include "../../android_ndk_jni_mk/hpatch.h"
 
 
@@ -24,7 +24,7 @@ static size_t getCacheMemory(int64_t cacheMemory){
            withDiff:(NSString *)diffFileName
               toNew:(NSString *)outNewFileName
 {
-    return [self patchWithOld:oldFileName withDiff:diffFileName toNew:outNewFileName byMemory:-1];
+    return [hpatcher patchWithOld:oldFileName withDiff:diffFileName toNew:outNewFileName byMemory:-1];
 }
 
 + (int)patchWithOld:(NSString *)oldFileName
