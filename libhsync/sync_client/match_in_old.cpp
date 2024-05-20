@@ -44,7 +44,7 @@ namespace sync_private{
 static const int kMatchHitOutLimit =16;       //limit match deep
 static const size_t kBestReadSize  =1024*256; //for sequence read
 #if (_IS_USED_MULTITHREAD)
-static const size_t kBestMTClipSize=1*1024*1024; //for muti-thread read once
+static const size_t kBestMTClipSize=1*1024*1024; //for multi-thread read once
 struct _TMatchDatas;
 namespace{
     struct TMt:public TMtByChannel{
@@ -246,7 +246,8 @@ struct TOldDataCache:public TOldDataCache_base {
     inline tm_roll_uint hashValue()const{ return m_rollHash; }
     inline bool roll(){
         const TByte* curIn=m_cur+m_kSyncBlockSize;
-        if (curIn!=m_cache.data_end()){
+        assert(curIn>=m_cache.data());
+        if (curIn<m_cache.data_end()){
             m_rollHash=roll_hash_roll(m_rollHash,m_kSyncBlockSize,*m_cur,*curIn);
             ++m_cur;
             return true;
