@@ -407,7 +407,7 @@ void test_fadler128(const TByte* data,const TByte* data_end){
 }
 #endif
 
-int main() {
+int main(void) {
     double bestCR_32bit =1.0/(((uint64_t)1)<<32);
     double bestCR_64bit =bestCR_32bit*bestCR_32bit;
     double bestCR_128bit=bestCR_64bit*bestCR_64bit;
