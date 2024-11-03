@@ -11,21 +11,23 @@ else
 endif
 # 0: not need lzma;  1: compile lzma source code;  2: used -llzma to link lzma lib;
 LZMA     := 1
+# lzma decompressor used arm64 asm optimize? 
 ARM64ASM := 0
-RISCV32  := 0
+# lzma only can used software CRC? (no hardware CRC)
+USE_CRC_EMU := 0
+# supported atomic uint64?
 # 0: not need zstd;  1: compile zstd source code;  2: used -lzstd to link zstd lib;
 ZSTD     := 1
 MD5      := 1
-STATIC_CPP := 0
 # used clang?
 CL  	 := 0
 # build with -m32?
 M32      := 0
 # build for out min size
 MINS     := 0
-# support VCDIFF? 
+# need support VCDIFF? 
 VCD      := 1
-# support bsdiff&bspatch?
+# need support bsdiff&bspatch?
 BSD      := 1
 ifeq ($(OS),Windows_NT) # mingw?
   CC    := gcc
@@ -44,13 +46,20 @@ endif
 ifeq ($(LDEF),0)
 else
   ifeq ($(ZLIB),2)
-  $(error error: libdeflate not support -lz! need zlib source code, set ZLIB=1 continue)
+  $(error error: now libdeflate decompressor not support -lz! need zlib source code, set ZLIB=1 continue)
   else
     ifeq ($(ZLIB),0)
     $(warning warning: libdeflate can't support all of the deflate code, when no zlib source code)
     endif
   endif
 endif
+
+STATIC_CPP := 0
+STATIC_C := 0
+# -1: no pie; 0: default;
+PIE :=0
+ATOMIC_U64 := 1
+
 
 HDIFF_OBJ  := 
 HPATCH_OBJ := \
@@ -238,8 +247,7 @@ DEF_FLAGS := \
     -D_IS_NEED_DEFAULT_CompressPlugin=0 \
     -D_IS_NEED_ALL_ChecksumPlugin=0 \
     -D_IS_NEED_DEFAULT_ChecksumPlugin=0 
-ifeq ($(RISCV32),0)
-else
+ifeq ($(ATOMIC_U64),0)
   DEF_FLAGS += -D_IS_NO_ATOMIC_U64=1
 endif
 ifeq ($(M32),0)
@@ -321,9 +329,10 @@ else
     else
       DEF_FLAGS += -DZ7_LZMA_DEC_OPT
     endif
-    ifeq ($(VCD),0)
-    else
-      DEF_FLAGS += -DUSE_CRC_EMU
+    ifneq ($(VCD),0)
+      ifneq ($(USE_CRC_EMU),0)
+        DEF_FLAGS += -DUSE_CRC_EMU
+      endif
     endif
   endif
 endif
@@ -364,24 +373,32 @@ ifeq ($(MT),0)
 else
   PATCH_LINK += -lpthread	# link pthread
 endif
-DIFF_LINK  := $(PATCH_LINK)
+ifeq ($(PIE),-1)
+  PATCH_LINK += -no-pie
+endif
+ifeq ($(STATIC_C),0)
+else
+  PATCH_LINK += -static
+endif
 ifeq ($(M32),0)
 else
-  DIFF_LINK += -m32
+  PATCH_LINK += -m32
 endif
 ifeq ($(MINS),0)
 else
-  DIFF_LINK += -s -Wl,--gc-sections,--as-needed
+  PATCH_LINK += -s -Wl,--gc-sections,--as-needed
 endif
-ifeq ($(CL),1)
-  CXX := clang++
-  CC  := clang
-endif
+DIFF_LINK  := $(PATCH_LINK)
 ifeq ($(STATIC_CPP),0)
   DIFF_LINK += -lstdc++
 else
   DIFF_LINK += -static-libstdc++
 endif
+ifeq ($(CL),1)
+  CXX := clang++
+  CC  := clang
+endif
+
 
 CFLAGS   += $(DEF_FLAGS) 
 CXXFLAGS += $(DEF_FLAGS) -std=c++11
