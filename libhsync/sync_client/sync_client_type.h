@@ -69,8 +69,8 @@ typedef struct{
 #endif
 
 typedef struct{
-  uint32_t skipBitsInFirstCodeByte  : 3;
   uint32_t bitsSize                 : (32-3);
+  uint32_t skipBitsInFirstCodeByte  : 3;
 } savedBitsInfo_t;
 
 
@@ -85,7 +85,7 @@ typedef struct{
     uint32_t                kSyncBlockSize;
     uint32_t                samePairCount;
     uint8_t                 isDirSyncInfo;
-    uint8_t                 isNotCheckChecksumNewWhenMatch; //run newData's checkChecksum, default is false
+    uint8_t                 isNotCChecksumNewMTParallel; // not run checkChecksum newData in parallel? default is false(run parallel)
     uint8_t                 isSeqMatch;//default is false
     uint8_t                 isSavedBitsSizes;//default is false & savedSizes is bytes size; if true, savedSizes is bits size;
     uint8_t                 decompressInfoSize;
@@ -113,13 +113,16 @@ typedef struct{
     hpatch_TChecksum*       fileChecksumPlugin;
     hsync_TDictDecompress*  _decompressPlugin;
     void*                   _import;
+    void*                   _extraMem;
 } TNewDataSyncInfo;
 
 #define _bitsToBytes(bits) (((bits)+7)>>3)
 
 struct TNeedSyncInfos;
+//out_skipBitsInFirstCodeByte&out_lastByteHalfBits can null, only for zsync;
 typedef void (*TSync_getBlockInfoByIndex)(const struct TNeedSyncInfos* needSyncInfos,uint32_t blockIndex,
-                                          hpatch_BOOL* out_isNeedSync,uint32_t* out_syncSize,hpatch_byte* out_lastByteHalfBits);
+                                          hpatch_BOOL* out_isNeedSync,uint32_t* out_syncSize,
+                                          hpatch_byte* out_skipBitsInFirstCodeByte,hpatch_byte* out_lastByteHalfBits);
 typedef struct TNeedSyncInfos{
     hpatch_StreamPos_t          newDataSize;     // new data size
     hpatch_StreamPos_t          localNewDataSize; // local new file size for download continue
@@ -135,11 +138,11 @@ typedef struct TNeedSyncInfos{
 } TNeedSyncInfos;
 
 size_t TNeedSyncInfos_getNextRanges(const TNeedSyncInfos* nsi,hpatch_StreamPos_t* dstRanges,size_t maxGetRangeLen,
-                                    uint32_t* curBlockIndex,hpatch_StreamPos_t* curPosInNewSyncData);
+                                    uint32_t* curBlockIndex,hpatch_StreamPos_t* curPosInNewSyncData,uint32_t isReLoadNewHalf);
 static hpatch_inline
-size_t TNeedSyncInfos_getRangeCount(const TNeedSyncInfos* nsi,
-                                    uint32_t curBlockIndex,hpatch_StreamPos_t curPosInNewSyncData){
-    return TNeedSyncInfos_getNextRanges(nsi,0,~(size_t)0,&curBlockIndex,&curPosInNewSyncData); }
+size_t TNeedSyncInfos_getRangeCount(const TNeedSyncInfos* nsi,uint32_t curBlockIndex,
+                                    hpatch_StreamPos_t curPosInNewSyncData,uint32_t isReLoadNewHalf){
+    return TNeedSyncInfos_getNextRanges(nsi,0,~(size_t)0,&curBlockIndex,&curPosInNewSyncData,isReLoadNewHalf); }
 
 typedef struct IReadSyncDataListener{
     void*       readSyncDataImport;
@@ -147,10 +150,12 @@ typedef struct IReadSyncDataListener{
     void        (*onNeedSyncInfo)   (struct  IReadSyncDataListener* listener,const TNeedSyncInfos* needSyncInfo);
     //readSyncDataBegin can null
     hpatch_BOOL (*readSyncDataBegin)(struct  IReadSyncDataListener* listener,const TNeedSyncInfos* needSyncInfo,
-                                     uint32_t blockIndex,hpatch_StreamPos_t posInNewSyncData,hpatch_StreamPos_t posInNeedSyncData);
-    //download range data
+                                     uint32_t blockIndex,hpatch_StreamPos_t posInNewSyncData,uint32_t isReLoadNewHalf,
+                                     hpatch_StreamPos_t posInNeedSyncData,uint32_t isReLoadDiffHalf);
+    //download range data; isReLoadNewHalf&isReLoadDiffHalf is 0 or 1; if 1, reload the last byte of prev block.
     hpatch_BOOL (*readSyncData)     (struct IReadSyncDataListener* listener,uint32_t blockIndex,
-                                     hpatch_StreamPos_t posInNewSyncData,hpatch_StreamPos_t posInNeedSyncData,
+                                     hpatch_StreamPos_t posInNewSyncData,uint32_t isReLoadNewHalf,
+                                     hpatch_StreamPos_t posInNeedSyncData,uint32_t isReLoadDiffHalf,
                                      unsigned char* out_syncDataBuf,uint32_t syncDataSize);
     //readSyncDataEnd can null
     void        (*readSyncDataEnd)  (struct IReadSyncDataListener* listener);

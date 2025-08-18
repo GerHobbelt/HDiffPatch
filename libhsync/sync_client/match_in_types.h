@@ -55,7 +55,7 @@ static const size_t kBestMTClipSize=1*1024*1024; //for multi-thread read once
 #endif //_IS_USED_MULTITHREAD
 
 typedef unsigned char TByte;
-typedef uint64_t tm_roll_uint;
+typedef hpatch_uint64_t tm_roll_uint;
 
 struct TIndex_comp0{
     inline explicit TIndex_comp0(const uint8_t* _hashs,size_t _byteSize,bool isSeqMatch=false)
@@ -157,8 +157,8 @@ struct TStreamDataRoll:public TStreamDataCache_base {
                 if (isRollEnded()) return;
                 m_rollHash=roll_hash_start(m_cur,m_kSyncBlockSize);
             }
-    inline tm_roll_uint hashValue()const{ return m_rollHash; }
-    inline bool roll(){
+    hpatch_force_inline tm_roll_uint hashValue()const{ return m_rollHash; }
+    hpatch_force_inline bool roll(){
         const TByte* curIn=m_cur+m_kSyncBlockSize;
         assert(curIn>=m_cache.data());
         if (curIn<m_cache.data_end()){
