@@ -1,8 +1,9 @@
-//_clock_for_demo.h
-// double clock_s()
+//_sign_diff_type.h
+//sign_diff
+//Created by housisong on 2025-04-11.
 /*
  The MIT License (MIT)
- Copyright (c) 2012-2017 HouSisong
+ Copyright (c) 2025 HouSisong
  
  Permission is hereby granted, free of charge, to any person
  obtaining a copy of this software and associated documentation
@@ -14,7 +15,7 @@
  conditions:
  
  The above copyright notice and this permission notice shall be
- included in all copies of the Software.
+ included in all copies or substantial portions of the Software.
  
  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
@@ -24,36 +25,13 @@
  WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  OTHER DEALINGS IN THE SOFTWARE.
- */
-#ifndef HDiffPatch_clock_h
-#define HDiffPatch_clock_h
+*/
 
-//  #include <time.h>
-//  static double clock_s(){ return clock()*1.0/CLOCKS_PER_SEC; }
-#ifdef _WIN32
-    #include <windows.h>
-    static double clock_s(){
-        LARGE_INTEGER f;
-        if (QueryPerformanceFrequency(&f)){
-            LARGE_INTEGER c;
-            QueryPerformanceCounter(&c);
-            return c.QuadPart/((double)f.QuadPart);
-        }
-        return GetTickCount64()/1000.0; 
-    }
-#else
-    //Unix-like system
-    #include <sys/time.h>
-    #include <assert.h>
-    static double clock_s(){
-        struct timeval t={0,0};
-        int ret=gettimeofday(&t,0);
-        assert(ret==0);
-        if (ret==0)
-            return t.tv_sec + t.tv_usec/1000000.0;
-        else
-            return 0;
-    }
+#ifndef hsign_diff_type_h
+#define hsign_diff_type_h
+#include "../../libHDiffPatch/HDiff/diff.h"
+#include "../sync_client/sync_client_type.h"
+
+typedef TNewDataSyncInfo TOldDataSyncInfo;
+
 #endif
-
-#endif //HDiffPatch_clock_h
