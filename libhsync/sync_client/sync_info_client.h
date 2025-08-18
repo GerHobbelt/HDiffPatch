@@ -93,6 +93,15 @@ typedef enum TSyncClient_resultType{
     kSyncClient_newDirPatchBeginError,
     kSyncClient_newDirPatchFinishError,
 
+    kSyncClient_newZsyncInfoTypeError=100,
+    kSyncClient_newZsyncInfoOpenError,
+    kSyncClient_newZsyncInfoCloseError,
+    kSyncClient_newZsyncInfoDataError,
+    kSyncClient_newZsyncInfoMinVersionError,
+    kSyncClient_newZsyncInfoBlocksizeTooSmallError,
+    kSyncClient_newZsyncInfoZmap2BlocksError,
+    kSyncClient_newZsyncInfoGzUnsupportError,
+
     kSyncClient_ERROR_CODE_MAX = 200,
 } TSyncClient_resultType;
 
@@ -105,6 +114,9 @@ typedef struct ISyncInfoListener{
     //onNeedSyncInfo can null
     void                   (*onNeedSyncInfo)      (ISyncInfoListener* listener,const TNeedSyncInfos* needSyncInfo);
 } ISyncInfoListener;
+
+hpatch_inline static
+void TNewDataSyncInfo_init(TNewDataSyncInfo* self) { memset(self,0,sizeof(*self)); }
 
 TSyncClient_resultType TNewDataSyncInfo_open_by_file(TNewDataSyncInfo* self,const char* newSyncInfoFile,
                                                      ISyncInfoListener* listener);
