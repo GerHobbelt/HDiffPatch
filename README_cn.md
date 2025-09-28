@@ -56,15 +56,16 @@ hsynz 支持 zstd 压缩算法并且比 zsync 速度快得多；而且可以兼�
 `$ cd <dir>/HDiffPatch`   
 ### Linux or MacOS X ###
 试试:   
-`$ make LDEF=0 LZMA=0 ZSTD=0 MD5=0`   
+`$ make LDEF=0 LZMA=0 ZSTD=0 MD5=0 XXH=0`   
 bzip2 : 如果编译失败，显示 `fatal error: bzlib.h: No such file or directory`，请使用系统的包管理器安装libbz2，然后再试一次；或者下载并使用libbz2源代码来编译:
 ```
 $ git clone https://github.com/sisong/bzip2.git ../bzip2
-$ make LDEF=0 LZMA=0 ZSTD=0 MD5=0 BZIP2=1
+$ make LDEF=0 LZMA=0 ZSTD=0 MD5=0 XXH=0 BZIP2=1
 ```
-如果需要支持 lzma、zstd 和 md5 等 默认编译设置，试试:    
+如果需要支持 lzma、zstd 和 md5 xxh 等 默认编译设置，试试:    
 ```
 $ git clone https://github.com/sisong/libmd5.git ../libmd5
+$ git clone https://github.com/sisong/xxHash.git ../xxHash
 $ git clone https://github.com/sisong/lzma.git ../lzma
 $ git clone https://github.com/sisong/zstd.git ../zstd
 $ git clone https://github.com/sisong/zlib.git ../zlib
@@ -77,6 +78,7 @@ $ make
 使用 [`Visual Studio`](https://visualstudio.microsoft.com) 打开 `builds/vc/HDiffPatch.sln` 来编译之前，先将第三方库下载到同级文件夹中，如下所示: 
 ```
 $ git clone https://github.com/sisong/libmd5.git ../libmd5
+$ git clone https://github.com/sisong/xxHash.git ../xxHash
 $ git clone https://github.com/sisong/lzma.git ../lzma
 $ git clone https://github.com/sisong/zstd.git ../zstd
 $ git clone https://github.com/sisong/zlib.git   ../zlib
@@ -117,11 +119,11 @@ $ git clone https://github.com/sisong/bzip2.git  ../bzip2
       一般匹配块越大,内存占用越小,速度越快,但补丁包可能变大。
   -block-fastMatchBlockSize
       必须和-m配合使用;
-      在使用较慢的逐字节匹配之前使用基于块的快速匹配, 默认-block-4k;
+      在使用较慢的逐字节匹配之前使用基于块的快速匹配, 默认-block-1k;
       如果设置为-block-0，意思是关闭基于块的提前匹配；
-      快速块匹配大小fastMatchBlockSize>=4, 推荐256,1k,64k,1m等;
+      快速块匹配大小fastMatchBlockSize>=4, 推荐128,4k,64k等;
       如果新版本和旧版本相同数据比较多,那diff速度就会比较快,并且减少内存占用,
-      但有很小的可能补丁包会变大。
+      但有很小的可能补丁包会稍微变大。
   -cache
       必须和-m配合使用;
       给较慢的匹配开启一个大型缓冲区,来加快匹配速度(不影响补丁大小), 默认不开启;
@@ -146,11 +148,10 @@ $ git clone https://github.com/sisong/bzip2.git  ../bzip2
       设置线程数parallelThreadNumber>1时,开启多线程并行模式;
       默认为4;需要占用较多的内存。
   -p-search-searchThreadNumber
-      必须和-s[-matchBlockSize]配合使用;
       默认情况下搜索线程数searchThreadNumber的值和parallelThreadNumber相同;
-      但当matchBlockSize较小时，多线程搜索需要频繁的随机磁盘读取，
-      所以有些时候多线程搜索反而比单线程搜索还慢很多!
-      如果设置searchThreadNumber<=1，可以关闭多线程搜索模式。
+      旧文件在HDD硬盘上时的警告：在使用-s-matchBlockSize 或 -block-fastMatchBlockSize(和-m配合时)时,
+        多线程搜索需要频繁的随机磁盘读取,这可能会导致速度变慢；这时就需要关闭(searchThreadNumber<=1)多
+        线程搜索模式或者降低搜索线程数searchThreadNumber的值!
   -c-compressType[-compressLevel]
       设置补丁数据使用的压缩算法和压缩级别等, 默认不压缩;
       补丁另存时,使用新的压缩参数设置来输出新补丁;
@@ -174,7 +175,7 @@ $ git clone https://github.com/sisong/bzip2.git  ../bzip2
             警告: lzma和lzma2是不同的压缩编码格式。
         -c-zstd[-{0..22}[-dictBits]]    默认级别 20
             压缩字典比特数dictBits 可以为10到30, 默认为23。
-            支持多线程并行压缩,较快。
+            支持多线程并行压缩,较快(但内存占用会比较大)。
   -C-checksumType
       为文件夹间diff设置数据校验算法, 默认为fadler64;
       支持的校验选项:
@@ -182,6 +183,8 @@ $ git clone https://github.com/sisong/bzip2.git  ../bzip2
         -C-crc32
         -C-fadler64             默认
         -C-md5
+        -C-xxh3                 (需要 v4.12版本 patch端)
+        -C-xxh128               推荐 (需要 v4.12版本 patch端)
   -n-maxOpenFileNumber
       为文件夹间的-s模式diff设置最大允许同时打开的文件数;
       maxOpenFileNumber>=16, 默认为48; 合适的限制值可能不同系统下不同。

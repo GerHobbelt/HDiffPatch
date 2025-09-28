@@ -31,6 +31,17 @@
 #include "../HPatch/patch_types.h"
 #include <stdexcept> //std::runtime_error
 #include <utility> //std::pair
+
+#ifndef _IS_OUT_DIFF_INFO
+#   define  _IS_OUT_DIFF_INFO   1
+#endif
+#if (_IS_OUT_DIFF_INFO)
+extern int _hdiff_is_out_diff_info;
+#  define   _out_diff_info(...)  do{ if (_hdiff_is_out_diff_info) printf(__VA_ARGS__); } while(0)
+#else
+#  define   _out_diff_info(...)
+#endif
+
 #define hdiff_kFileIOBufBestSize (1024*512)
 namespace hdiff_private{
 
@@ -157,6 +168,7 @@ extern "C"
                                    size_t searchBlockSize,size_t kPartPepeatSize);
         hpatch_BOOL (*next_search_block_MT)(ICoverLinesListener* listener,hdiff_TRange* out_newRange);//must thread safe
         hpatch_StreamPos_t (*get_limit_cover_length)(const ICoverLinesListener* listener); //if null, default kDefaultLimitCoverLen 
+        void (*map_streams_befor_serialize)(ICoverLinesListener* listener,const hpatch_TStreamInput** pnewData,const hpatch_TStreamInput** poldData);
     };
 
     struct hdiff_TMTSets_s{ // used by $hdiff -s

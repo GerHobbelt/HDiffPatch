@@ -30,7 +30,7 @@
 
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>  //fprintf
+#include <stdio.h>
 #include "libHDiffPatch/HPatch/patch.h"
 #include "_clock_for_demo.h"
 #include "_atosize.h"
@@ -48,6 +48,9 @@
 #else
 #   define  printf(...)
 #   define  _log_info_utf8(...) do{}while(0)
+#endif
+#ifndef _IS_NEED_PRINT_PROGRESS
+#   define _IS_NEED_PRINT_PROGRESS  _IS_NEED_PRINT_LOG
 #endif
 
 #ifndef _IS_NEED_MAIN
@@ -138,6 +141,9 @@
 //===== select needs checksum plugins or change to your plugin=====
 #   define _ChecksumPlugin_crc32    //    32 bit effective  //need zlib
 #   define _ChecksumPlugin_fadler64 // ?  63 bit effective
+#   define _ChecksumPlugin_md5      //   128 bit
+#   define _ChecksumPlugin_xxh3     //    64 bit fast
+#   define _ChecksumPlugin_xxh128   //   128 bit fast
 #endif
 #if (_IS_NEED_ALL_ChecksumPlugin)
 //===== select needs checksum plugins or change to your plugin=====
@@ -145,10 +151,7 @@
 #   define _ChecksumPlugin_adler64  // ?  30 bit effective
 #   define _ChecksumPlugin_fadler32 // ~  32 bit effective
 #   define _ChecksumPlugin_fadler128// ?  81 bit effective
-#   define _ChecksumPlugin_md5      //   128 bit
 #   define _ChecksumPlugin_blake3   //   256 bit
-#   define _ChecksumPlugin_xxh3     //    64 bit fast
-#   define _ChecksumPlugin_xxh128   //   128 bit fast
 #endif
 
 #include "checksum_plugin_demo.h"
@@ -1196,6 +1199,59 @@ static TByte* getPatchMemCache(hpatch_BOOL isLoadOldAll,size_t patchCacheSize,si
     return temp_cache;
 }
 
+#if (_IS_NEED_PRINT_PROGRESS)
+    typedef struct hpatch_TProgressStreamOutput{
+        hpatch_TStreamOutput        base;
+        const hpatch_TStreamOutput* streamOutput;
+        double                      time0;
+        double                      progressR;
+        unsigned int                progress;
+    } hpatch_TProgressStreamOutput;
+    static void _progressStreamOutput_updateProgress(hpatch_TProgressStreamOutput* self,hpatch_StreamPos_t curPos){
+        unsigned int progress=(unsigned int)((curPos*self->progressR)*1000+0.5);
+        progress=((progress<1000)&(((curPos<self->base.streamSize))))?progress:1000;
+        if (progress!=self->progress){
+            double time1=clock_s();
+            hpatch_BOOL isEnd=(progress==1000);
+            if ((time1>=self->time0+1.0/3)|isEnd){
+                const char* progressStr="=============================="; //strlen==30
+                self->progress=progress;
+                self->time0=time1;
+                printf("\r  patch progress: [%-30s]  %.1f%%  %s",
+                       progressStr+((1000-progress)*30/1000),progress*0.1,isEnd?"\n":"");
+                fflush(stdout);
+            }
+        }
+    }
+    static hpatch_BOOL _progressStreamOutput_read_writed(const struct hpatch_TStreamOutput* stream,hpatch_StreamPos_t readFromPos,
+                                                         unsigned char* out_data,unsigned char* out_data_end){
+        hpatch_TProgressStreamOutput* self=(hpatch_TProgressStreamOutput*)stream->streamImport;
+        return self->streamOutput->read_writed(self->streamOutput,readFromPos,out_data,out_data_end);
+    }
+    static hpatch_BOOL _progressStreamOutput_write(const struct hpatch_TStreamOutput* stream,hpatch_StreamPos_t writeToPos,
+                                                   const unsigned char* data,const unsigned char* data_end){
+        hpatch_TProgressStreamOutput* self=(hpatch_TProgressStreamOutput*)stream->streamImport;
+        hpatch_BOOL result=self->streamOutput->write(self->streamOutput,writeToPos,data,data_end);
+        if (result) _progressStreamOutput_updateProgress(self,writeToPos+(hpatch_size_t)(data_end-data));
+        return result;
+    }
+
+    static const hpatch_TStreamOutput* _progressStreamInput_wrapper(hpatch_TProgressStreamOutput* self,const hpatch_TStreamOutput* streamOutput){
+        memset(self,0,sizeof(*self));
+        if (!hpatch_getIsAtty(stdout))
+            return streamOutput; //when stdout redirected to a file, not show progress
+        self->base.streamImport=self;
+        self->base.streamSize=streamOutput->streamSize;
+        self->base.write=_progressStreamOutput_write;
+        self->base.read_writed=streamOutput->read_writed?_progressStreamOutput_read_writed:0;
+        self->streamOutput=streamOutput;
+        self->progress=-1;
+        self->progressR=1.0/(streamOutput->streamSize?streamOutput->streamSize:1);
+        _progressStreamOutput_updateProgress(self,0);
+        return &self->base;
+    }
+#endif //_IS_NEED_PRINT_PROGRESS
+
 int hpatch(const char* oldFileName,const char* diffFileName,const char* outNewFileName,
            hpatch_BOOL isLoadOldAll,size_t patchCacheSize,hpatch_StreamPos_t diffDataOffert,
            hpatch_StreamPos_t diffDataSize,hpatch_BOOL vcpatch_isChecksum,hpatch_BOOL vcpatch_isInMem,size_t threadNum){
@@ -1207,10 +1263,14 @@ int hpatch(const char* oldFileName,const char* diffFileName,const char* outNewFi
     hpatch_TFileStreamOutput    newData;
     hpatch_TFileStreamInput     diffData;
     hpatch_TFileStreamInput     oldData;
-    hpatch_TStreamInput* poldData=&oldData.base;
+    const hpatch_TStreamInput* poldData=&oldData.base;
+    const hpatch_TStreamOutput* pnewData=&newData.base;
     TByte*               temp_cache=0;
     size_t               temp_cache_size;
     int                  patch_result=HPATCH_SUCCESS;
+#if (_IS_NEED_PRINT_PROGRESS)
+    hpatch_TProgressStreamOutput _progressStreamOutput;
+#endif
     hpatch_TFileStreamInput_init(&oldData);
     hpatch_TFileStreamInput_init(&diffData);
     hpatch_TFileStreamOutput_init(&newData);
@@ -1284,10 +1344,13 @@ int hpatch(const char* oldFileName,const char* diffFileName,const char* outNewFi
         temp_cache=getPatchMemCache(isLoadOldAll,patchCacheSize,mustAppendMemSize,maxWindowSize, &temp_cache_size);
     }
     check(temp_cache,HPATCH_MEM_ERROR,"alloc cache memory");
+#if (_IS_NEED_PRINT_PROGRESS)
+    pnewData=_progressStreamInput_wrapper(&_progressStreamOutput,pnewData);
+#endif
 #if (_IS_NEED_SINGLE_STREAM_DIFF)
     if (diffInfos.isSingleCompressedDiff){
         check(temp_cache_size>=diffInfos.sdiffInfo.stepMemSize+hpatch_kStreamCacheSize*3,HPATCH_MEM_ERROR,"alloc cache memory");
-        if (!patch_single_compressed_diff(&newData.base,poldData,&diffData.base,diffInfos.sdiffInfo.diffDataPos,
+        if (!patch_single_compressed_diff(pnewData,poldData,&diffData.base,diffInfos.sdiffInfo.diffDataPos,
                                           diffInfos.sdiffInfo.uncompressedSize,diffInfos.sdiffInfo.compressedSize,decompressPlugin,
                                           diffInfos.sdiffInfo.coverCount,(size_t)diffInfos.sdiffInfo.stepMemSize,
                                           temp_cache,temp_cache+temp_cache_size,0,threadNum))
@@ -1296,20 +1359,20 @@ int hpatch(const char* oldFileName,const char* diffFileName,const char* outNewFi
 #endif
 #if (_IS_NEED_BSDIFF)
     if (diffInfos.isBsDiff){
-        if (!bspatch_with_cache(&newData.base,poldData,&diffData.base,decompressPlugin,
+        if (!bspatch_with_cache(pnewData,poldData,&diffData.base,decompressPlugin,
                                 temp_cache,temp_cache+temp_cache_size))
             patch_result=HPATCH_BSPATCH_ERROR;
     }else
 #endif
 #if (_IS_NEED_VCDIFF)
     if (diffInfos.isVcDiff){
-        if (!vcpatch_with_cache(&newData.base,poldData,&diffData.base,decompressPlugin,
+        if (!vcpatch_with_cache(pnewData,poldData,&diffData.base,decompressPlugin,
                                 vcpatch_isChecksum,temp_cache,temp_cache+temp_cache_size))
             patch_result=HPATCH_VCPATCH_ERROR;
     }else
 #endif
     {
-        if (!patch_decompress_with_cache(&newData.base,poldData,&diffData.base,decompressPlugin,
+        if (!patch_decompress_with_cache(pnewData,poldData,&diffData.base,decompressPlugin,
                                          temp_cache,temp_cache+temp_cache_size))
             patch_result=HPATCH_HPATCH_ERROR;
     }
@@ -1355,6 +1418,9 @@ int hpatch_dir(const char* oldPath,const char* diffFileName,const char* outNewPa
     hpatch_TDecompress   _decompressPlugin={0};
     const hpatch_TStreamInput*  oldStream=0;
     const hpatch_TStreamOutput* newStream=0;
+#if (_IS_NEED_PRINT_PROGRESS)
+    hpatch_TProgressStreamOutput _progressStreamOutput;
+#endif
     hpatch_TFileStreamInput_init(&diffData);
     TDirPatcher_init(&dirPatcher);
     if (oldPath) assert(0!=strcmp(oldPath,outNewPath));
@@ -1419,31 +1485,6 @@ int hpatch_dir(const char* oldPath,const char* diffFileName,const char* outNewPa
     }
     check(hlistener->patchBegin(hlistener,&dirPatcher),
           DIRPATCH_PATCHBEGIN_ERROR,"dir patch begin");
-    {// checksumPlugin
-        int wantChecksumCount = checksumSet->isCheck_dirDiffData+checksumSet->isCheck_oldRefData+
-        checksumSet->isCheck_newRefData+checksumSet->isCheck_copyFileData;
-        assert(checksumSet->checksumPlugin==0);
-        if (wantChecksumCount>0){
-            if (strlen(dirDiffInfo->checksumType)==0){
-                memset(checksumSet,0,sizeof(*checksumSet));
-                printf("  WARNING: no checksum saved in diffFile,can not do checksum\n");
-            }else{
-                if (!findChecksum(&checksumSet->checksumPlugin,dirDiffInfo->checksumType)){
-                    LOG_ERR("not found checksumType \"%s\" ERROR!\n",dirDiffInfo->checksumType);
-                    check_on_error(DIRPATCH_CHECKSUMTYPE_ERROR);
-                }
-                printf("hpatchz run with checksum plugin: \"%s\" (checksumSets:%s%s%s%s)\n",dirDiffInfo->checksumType,
-                       checksumSet->isCheck_dirDiffData?" diff":"",checksumSet->isCheck_oldRefData?" old":"",
-                       checksumSet->isCheck_newRefData?" new":"",checksumSet->isCheck_copyFileData?" copy":"");
-                if (!TDirPatcher_checksum(&dirPatcher,checksumSet)){
-                    check(!TDirPatcher_isDiffDataChecksumError(&dirPatcher),
-                          DIRPATCH_CHECKSUM_DIFFDATA_ERROR,"diffFile checksum");
-                    check(hpatch_FALSE,DIRPATCH_CHECKSUMSET_ERROR,"diffFile set checksum");
-                }
-            }
-        }
-    }
-
     {//mem cache
         size_t mustAppendMemSize=0;
 #if (_IS_NEED_SINGLE_STREAM_DIFF)
@@ -1457,6 +1498,31 @@ int hpatch_dir(const char* oldPath,const char* diffFileName,const char* outNewPa
         check(p_temp_mem,HPATCH_MEM_ERROR,"alloc cache memory");
         temp_cache=p_temp_mem;
     }
+    {// checksumPlugin
+        int wantChecksumCount = checksumSet->isCheck_dirDiffData+checksumSet->isCheck_oldRefData+
+        checksumSet->isCheck_newRefData+checksumSet->isCheck_copyFileData;
+        assert(checksumSet->checksumPlugin==0);
+        if (wantChecksumCount>0){
+            if (strlen(dirDiffInfo->checksumType)==0){
+                memset(checksumSet,0,sizeof(*checksumSet));
+                printf("  WARNING: no checksum saved in diffFile,can not do checksum\n");
+            }else{
+                if (!findChecksum(&checksumSet->checksumPlugin,dirDiffInfo->checksumType)){
+                    LOG_ERR("not found checksumType \"%s\" ERROR!\n",dirDiffInfo->checksumType);
+                    check_on_error(DIRPATCH_CHECKSUMTYPE_ERROR);
+                }
+                printf("hpatchz run with checksum plugin: \"%s\" (checksumSets:%s%s%s%s)\n\n",dirDiffInfo->checksumType,
+                       checksumSet->isCheck_dirDiffData?" diff":"",checksumSet->isCheck_oldRefData?" old":"",
+                       checksumSet->isCheck_newRefData?" new":"",checksumSet->isCheck_copyFileData?" copy":"");
+                if (!TDirPatcher_checksum(&dirPatcher,checksumSet,temp_cache,temp_cache+temp_cache_size)){
+                    check(!TDirPatcher_isDiffDataChecksumError(&dirPatcher),
+                          DIRPATCH_CHECKSUM_DIFFDATA_ERROR,"diffFile checksum");
+                    check(hpatch_FALSE,DIRPATCH_CHECKSUMSET_ERROR,"diffFile set checksum");
+                }
+            }
+        }
+    }
+
     {//old data
         if (temp_cache_size>=dirDiffInfo->hdiffInfo.oldDataSize+min_temp_cache_size){
             // all old while auto cache by patch; not need open old files at same time
@@ -1469,6 +1535,9 @@ int hpatch_dir(const char* oldPath,const char* diffFileName,const char* outNewPa
         check(TDirPatcher_openNewDirAsStream(&dirPatcher,&hlistener->base,&newStream),
               DIRPATCH_OPEN_NEWPATH_ERROR,"open newFile");
     }
+#if (_IS_NEED_PRINT_PROGRESS)
+    newStream=_progressStreamInput_wrapper(&_progressStreamOutput,newStream);
+#endif
     //patch
     if(!TDirPatcher_patch(&dirPatcher,newStream,oldStream,temp_cache,temp_cache+temp_cache_size,threadNum)){
         check_dec(_decompressPlugin.decError);
@@ -1480,6 +1549,7 @@ int hpatch_dir(const char* oldPath,const char* diffFileName,const char* outNewPa
               DIRPATCH_CHECKSUM_NEWDATA_ERROR,"newFile checksum");
         check(hpatch_FALSE,DIRPATCH_PATCH_ERROR,"dir patch run");
     }
+    printf("  patch ok!\n");
 clear:
     _isInClear=hpatch_TRUE;
     check(hlistener->patchFinish(hlistener,result==HPATCH_SUCCESS),DIRPATCH_PATCHFINISH_ERROR,"dir patch finish");
