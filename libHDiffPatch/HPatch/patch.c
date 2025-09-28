@@ -1829,6 +1829,7 @@ static hpatch_BOOL _cache_old(hpatch_TStreamInput** out_cachedOld,const hpatch_T
 
 #endif //_IS_NEED_CACHE_OLD_BY_COVERS
 
+#if (_IS_NEED_CACHE_OLD_ALL)
 hpatch_BOOL _patch_cache_all_old(const hpatch_TStreamInput** poldData,size_t kMinTempCacheSize,
                                  TByte** ptemp_cache,TByte** ptemp_cache_end,hpatch_BOOL* out_isReadError){
     const hpatch_TStreamInput* oldData=*poldData;
@@ -1853,6 +1854,7 @@ hpatch_BOOL _patch_cache_all_old(const hpatch_TStreamInput** poldData,size_t kMi
     }
     return hpatch_FALSE;
 }
+#endif //_IS_NEED_CACHE_OLD_ALL
 
 static hpatch_BOOL _patch_cache(hpatch_TCovers** out_covers,
                                 const hpatch_TStreamInput** poldData,hpatch_StreamPos_t newDataSize,
@@ -2038,7 +2040,7 @@ hpatch_BOOL hpatch_coverList_open_compressedDiff(hpatch_TCoverList* out_coverLis
 
 //
 
-#if (_IS_USED_MULTITHREAD)
+#if (_HPATCH_IS_USED_MULTITHREAD)
 #   include "hpatch_mt/hpatch_mt.h"
 #endif
 
@@ -2052,9 +2054,12 @@ hpatch_BOOL _patch_single_compressed_diff_mt(const hpatch_TStreamOutput* out_new
                                              hpatch_StreamPos_t coverCount,hpatch_size_t stepMemSize,
                                              unsigned char* temp_cache,unsigned char* temp_cache_end,
                                              sspatch_coversListener_t* coversListener,
-                                             hpatchMTSets_t mtsets){
-#if (_IS_USED_MULTITHREAD)
+                                             size_t maxThreadNum,hpatchMTSets_t hpatchMTSets){
+#if (_HPATCH_IS_USED_MULTITHREAD)
     struct hpatch_mt_manager_t* hpatch_mt_manager=0;
+    hpatchMTSets_t mtsets=hpatch_getMTSets(out_newData->streamSize,oldData->streamSize,singleCompressedDiff->streamSize-diffData_pos,
+                                           decompressPlugin,_kCacheSgCount,stepMemSize,
+                                           temp_cache_end-temp_cache,maxThreadNum,hpatchMTSets);
 #endif
     hpatch_BOOL result;
     hpatch_BOOL isNeedOutCache=hpatch_TRUE;
@@ -2068,7 +2073,7 @@ hpatch_BOOL _patch_single_compressed_diff_mt(const hpatch_TStreamOutput* out_new
     }
     diffData_posEnd=(decompressPlugin?compressedSize:uncompressedSize)+diffData_pos;
     if (diffData_posEnd>singleCompressedDiff->streamSize) return _hpatch_FALSE;
-#if (_IS_USED_MULTITHREAD)
+#if (_HPATCH_IS_USED_MULTITHREAD)
     mtsets.decompressDiff_isMT=decompressPlugin? mtsets.decompressDiff_isMT:0;
     if (_hpatchMTSets_threadNum(mtsets)>1){
         isNeedOutCache=!mtsets.writeNew_isMT;
@@ -2092,7 +2097,7 @@ hpatch_BOOL _patch_single_compressed_diff_mt(const hpatch_TStreamOutput* out_new
 
     if (decompressPlugin)
         close_compressed_stream_as_uncompressed(&uncompressedStream);
-#if (_IS_USED_MULTITHREAD)
+#if (_HPATCH_IS_USED_MULTITHREAD)
     if (hpatch_mt_manager){
         if (!hpatch_mt_manager_close(hpatch_mt_manager,!result))
             result=_hpatch_FALSE;
@@ -2626,13 +2631,10 @@ hpatch_BOOL _patch_single_stream_mt(sspatch_listener_t* listener,
     if ((temp_cache==0)||(temp_cache>=temp_cacheEnd))
         result=_hpatch_FALSE;
     if (result){
-        hpatchMTSets_t mtSets=hpatch_getMTSets(out_newData->streamSize,oldData->streamSize,singleCompressedDiff->streamSize-diffInfo.diffDataPos,
-                                               decompressPlugin,_kCacheSgCount,(size_t)diffInfo.stepMemSize,
-                                               temp_cacheEnd-temp_cache,maxThreadNum,hpatchMTSets);
         result=_patch_single_compressed_diff_mt(out_newData,oldData,singleCompressedDiff,diffInfo.diffDataPos,
                                                 diffInfo.uncompressedSize,diffInfo.compressedSize,decompressPlugin,
                                                 diffInfo.coverCount,(size_t)diffInfo.stepMemSize,
-                                                temp_cache,temp_cacheEnd,coversListener,mtSets);
+                                                temp_cache,temp_cacheEnd,coversListener,maxThreadNum,hpatchMTSets);
     }
     if (listener->onPatchFinish)
         listener->onPatchFinish(listener,temp_cache,temp_cacheEnd);

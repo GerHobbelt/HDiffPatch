@@ -38,12 +38,22 @@ extern "C" {
 typedef struct hpatch_TWorkBuf{
     struct hpatch_TWorkBuf* next;
     size_t                  data_size;
-    //hpatch_byte           data[];
+    //hpatch_byte           data[workBufSize];
 } hpatch_TWorkBuf;
 hpatch_force_inline static
 hpatch_byte* TWorkBuf_data(hpatch_TWorkBuf* self) { return ((hpatch_byte*)self)+sizeof(hpatch_TWorkBuf); }
 hpatch_force_inline static
 hpatch_byte* TWorkBuf_data_end(hpatch_TWorkBuf* self) { return TWorkBuf_data(self)+self->data_size; }
+hpatch_inline static
+hpatch_size_t TWorkBuf_bufCount(const hpatch_TWorkBuf* self) {
+    const hpatch_TWorkBuf* cur=self;
+    hpatch_size_t count=0;
+    while (cur){
+        ++count;
+        cur=cur->next;
+    }
+    return count;
+}
 
 hpatch_force_inline static
 void TWorkBuf_pushABufAtEnd(hpatch_TWorkBuf** pnode,hpatch_TWorkBuf* data){
@@ -73,6 +83,23 @@ hpatch_TWorkBuf* TWorkBuf_popAllBufs(hpatch_TWorkBuf** pnode){
     return result;
 }
 
+hpatch_force_inline static 
+size_t TWorkBuf_getWorkBufSize(size_t workBufNodeSize){
+                                    assert(workBufNodeSize>sizeof(hpatch_TWorkBuf));
+                                    return workBufNodeSize-sizeof(hpatch_TWorkBuf); }
+hpatch_inline static
+hpatch_TWorkBuf* TWorkBuf_createFreeListAt(hpatch_byte* pbuf,size_t workBufCount,size_t workBufNodeSize) {
+    hpatch_TWorkBuf* result = 0;
+    for (; (workBufCount--)>0;pbuf+= workBufNodeSize)
+        TWorkBuf_pushABufAtHead(&result, (hpatch_TWorkBuf*)pbuf);
+    return result;
+}
+hpatch_force_inline static
+hpatch_TWorkBuf* TWorkBuf_allocFreeList(void** pmem,size_t workBufCount,size_t workBufNodeSize) {
+    hpatch_TWorkBuf* result=TWorkBuf_createFreeListAt((hpatch_byte*)*pmem,workBufCount,workBufNodeSize);
+    (*(hpatch_byte**)pmem)+=workBufCount*workBufNodeSize;
+    return result;
+}
 
 typedef struct hpatch_mt_base_t{
     struct hpatch_mt_t*         h_mt;
@@ -88,7 +115,7 @@ typedef struct hpatch_mt_base_t{
 } hpatch_mt_base_t;
 
 
-hpatch_BOOL         _hpatch_mt_base_init(hpatch_mt_base_t* self,struct hpatch_mt_t* h_mt,hpatch_TWorkBuf* freeBufList);
+hpatch_BOOL         _hpatch_mt_base_init(hpatch_mt_base_t* self,struct hpatch_mt_t* h_mt,hpatch_TWorkBuf* freeBufList,hpatch_size_t workBufSize);
 void                _hpatch_mt_base_free(hpatch_mt_base_t* self);
 void                hpatch_mt_base_setOnError_(hpatch_mt_base_t* self);
 hpatch_TWorkBuf*    hpatch_mt_base_onceWaitABuf_(hpatch_mt_base_t* self,hpatch_TWorkBuf** pBufList,hpatch_BOOL* _isOnError);
@@ -108,7 +135,8 @@ void                hpatch_mt_base_aThreadEnd_(hpatch_mt_base_t* self){
                                                     --self->threadIsRunning;
                                                     c_locker_leave(self->_locker);
                                                 #endif
-                                                    hpatch_mt_onThreadEnd(self->h_mt);
+                                                    if (self->h_mt)
+                                                        hpatch_mt_onThreadEnd(self->h_mt);
                                                 }
 
                                                 
@@ -117,7 +145,7 @@ void                hpatch_mt_base_aThreadEnd_(hpatch_mt_base_t* self){
     while ((!_isOnError)&(out_data<out_data_end)){  \
         if (self->curDataBuf==0){       \
             if (hpatch_mt_isOnError(self->mt_base.h_mt)) { _isOnError=hpatch_TRUE; break; }     \
-            self->curDataBuf=hpatch_mt_base_onceWaitABuf_(&self->mt_base,&self->mt_base.dataBufList,&_isOnError);       \
+            self->curDataBuf=hpatch_mt_base_onceWaitABuf_(&self->mt_base,(hpatch_TWorkBuf**)&self->mt_base.dataBufList,&_isOnError);       \
         }       \
         if ((self->curDataBuf!=0)&(!_isOnError)){   \
             size_t readLen=self->curDataBuf->data_size-self->curDataBuf_pos;                    \
@@ -126,7 +154,7 @@ void                hpatch_mt_base_aThreadEnd_(hpatch_mt_base_t* self){
             self->curDataBuf_pos+=readLen;          \
             out_data+=readLen;          \
             if (self->curDataBuf_pos==self->curDataBuf->data_size){ \
-                hpatch_mt_base_pushABufAtHead_(&self->mt_base,&self->mt_base.freeBufList,self->curDataBuf,&_isOnError); \
+                hpatch_mt_base_pushABufAtHead_(&self->mt_base,(hpatch_TWorkBuf**)&self->mt_base.freeBufList,self->curDataBuf,&_isOnError); \
                 self->curDataBuf=0;     \
                 self->curDataBuf_pos=0; \
             }   \
@@ -134,6 +162,53 @@ void                hpatch_mt_base_aThreadEnd_(hpatch_mt_base_t* self){
     }           \
     return (!_isOnError); }
 
+
+typedef struct _hthreads_waiter_t{
+    volatile unsigned int   runningThreads;
+    HLocker                 _threadsEndLocker;
+    HCondvar                _threadsEndCondvar;
+} _hthreads_waiter_t;
+
+hpatch_force_inline static
+hpatch_BOOL _hthreads_waiter_init(_hthreads_waiter_t* self){
+    assert((self->runningThreads==0)&&(self->_threadsEndLocker==0)&&(self->_threadsEndCondvar==0));
+    self->_threadsEndLocker=c_locker_new();
+    self->_threadsEndCondvar=c_condvar_new();
+    return (self->_threadsEndCondvar!=0)&(self->_threadsEndLocker!=0);
+}
+
+hpatch_force_inline static
+void _hthreads_waiter_free(_hthreads_waiter_t* self){
+    assert(self->runningThreads==0);
+    _thread_obj_free(c_locker_delete,self->_threadsEndLocker);
+    _thread_obj_free(c_condvar_delete,self->_threadsEndCondvar);
+}
+
+hpatch_force_inline static
+void _hthreads_waiter_inc(_hthreads_waiter_t* self){
+    c_locker_enter(self->_threadsEndLocker);
+    ++self->runningThreads;
+    c_locker_leave(self->_threadsEndLocker);
+}
+
+hpatch_force_inline static
+void _hthreads_waiter_dec(_hthreads_waiter_t* self){
+    c_locker_enter(self->_threadsEndLocker);
+    assert(self->runningThreads>0); //logic error!
+    --self->runningThreads;
+    if (self->runningThreads==0)
+        c_condvar_signal(self->_threadsEndCondvar);
+    c_locker_leave(self->_threadsEndLocker);
+}
+
+hpatch_force_inline static
+void _hthreads_waiter_waitAllThreadEnd(_hthreads_waiter_t* self){
+    c_locker_enter(self->_threadsEndLocker);
+    while (self->runningThreads){
+        c_condvar_wait(self->_threadsEndCondvar,self->_threadsEndLocker);
+    }
+    c_locker_leave(self->_threadsEndLocker);
+}
 
 #endif //_IS_USED_MULTITHREAD
 #ifdef __cplusplus

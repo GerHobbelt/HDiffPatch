@@ -268,6 +268,9 @@ DEF_FLAGS := \
     -D_IS_NEED_DEFAULT_CompressPlugin=0 \
     -D_IS_NEED_ALL_ChecksumPlugin=0 \
     -D_IS_NEED_DEFAULT_ChecksumPlugin=0 
+ifeq ($(OS),Windows_NT) # mingw?
+  DEF_FLAGS += -D_IS_USED_WIN32_UTF8_WAPI=1
+endif
 ifeq ($(ATOMIC_U64),0)
   DEF_FLAGS += -D_IS_NO_ATOMIC_U64=1
 endif
@@ -363,6 +366,7 @@ else
   ifeq ($(ZSTD),1)
     DEF_FLAGS += -DZSTD_HAVE_WEAK_SYMBOLS=0 -DZSTD_TRACE=0 -DZSTD_DISABLE_ASM=1 -DZSTDLIB_HIDDEN= \
                  -DZSTDLIB_VISIBLE= -DZDICTLIB_VISIBLE= -DZSTDERRORLIB_VISIBLE= \
+                 -DZSTD_LIB_DEPRECATED=0 -DZSTD_STRIP_ERROR_STRINGS=1 \
 	               -I$(ZSTD_PATH) -I$(ZSTD_PATH)/common -I$(ZSTD_PATH)/compress -I$(ZSTD_PATH)/decompress
 	endif
 endif

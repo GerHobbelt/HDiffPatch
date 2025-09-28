@@ -63,8 +63,8 @@ typedef struct{
 #   define _check_malloc(p) { if (!(p)) return c_mt_NULL; }
 #endif
 
-int _parallel_import_c_exit_on_error=0;
-#define _check_exit()   { if (_parallel_import_c_exit_on_error) exit(_parallel_import_c_exit_on_error); }
+void (*_parallel_import_c_on_error)()=0;
+#define _on_mt_error()   { if (_parallel_import_c_on_error) _parallel_import_c_on_error(); }
 
 #if (_IS_USED_PTHREAD)
 #include <string.h> //for memset
@@ -73,7 +73,7 @@ int _parallel_import_c_exit_on_error=0;
 
 #define _LOG_ERR_PT(rt,func_name)   { LOG_ERR("pthread error: %s() return %d",func_name,rt);}
 #define _check_pt_init(rt,func_name){ if (rt!=0) { _LOG_ERR_PT(rt,func_name); } }
-#define _check_pt(rt,func_name)     { if (rt!=0) { _LOG_ERR_PT(rt,func_name); _check_exit(); } }
+#define _check_pt(rt,func_name)     { if (rt!=0) { _LOG_ERR_PT(rt,func_name); _on_mt_error(); } }
 
 static int _g_attr_RECURSIVE_is_init=0;
 static pthread_mutexattr_t _g_attr_RECURSIVE={0};
@@ -216,9 +216,9 @@ c_mt_bool_t c_thread_parallel(int threadCount,TThreadRunCallBackProc threadProc,
 #include <stdio.h>
 
 
-#define _LOG_ERR_WT(func_name)   { LOG_ERR("win32 thread error: %s() return false",func_name);}
+#define _LOG_ERR_WT(func_name)   { LOG_ERR("win32 thread error: %s() return false\n",func_name);}
 #define _check_wt_init(func_name){ _LOG_ERR_WT(func_name); }
-#define _check_wt(func_name)     { _LOG_ERR_WT(func_name); _check_exit(); }
+#define _check_wt(func_name)     { _LOG_ERR_WT(func_name); _on_mt_error(); }
 
 HLocker c_locker_new(void){
     CRITICAL_SECTION* self=(CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
@@ -332,3 +332,166 @@ c_mt_bool_t c_thread_parallel(int threadCount,TThreadRunCallBackProc threadProc,
 }
 
 #endif //_IS_USED_WIN32THREAD
+
+
+//----------------------- c_channel_t -----------------------
+
+#define _thread_obj_free(free_fn,th_obj) { if (th_obj) { free_fn(th_obj); th_obj=0; } }
+
+typedef struct c_channel_t{
+    HLocker     _locker;
+    HCondvar    _sendCond;
+    HCondvar    _acceptCond;
+    TChanData*  _dataList;
+    size_t      _maxDataCount;
+    volatile size_t         _curDataCount;
+    volatile size_t         _readDataIndex;
+    volatile size_t         _waitingCount;
+    volatile c_mt_bool_t    _isClosed;
+} c_channel_t;
+
+
+#define _channel_t_memSize (sizeof(c_channel_t)+(maxChanDataCount>0?maxChanDataCount:1)*sizeof(TChanData))
+size_t c_channel_t_memSize(size_t maxChanDataCount){
+    return _channel_t_memSize;
+}
+
+
+struct c_channel_t* c_channel_new(void* pmem,size_t memSize,size_t maxChanDataCount){
+    c_channel_t* self=(c_channel_t*)pmem;
+    if (memSize<_channel_t_memSize) return 0;
+    memset(self,0,_channel_t_memSize);
+    self->_locker=c_locker_new();
+    self->_sendCond=c_condvar_new();
+    self->_acceptCond=c_condvar_new();
+    self->_dataList=(TChanData*)(self+1);
+    self->_maxDataCount=maxChanDataCount;
+    if ((self->_locker==0)|(self->_sendCond==0)|(self->_acceptCond==0))
+        goto _on_error;
+
+    return self;
+
+_on_error:
+    c_channel_delete(self);
+    return 0;
+}
+
+void c_channel_delete(struct c_channel_t* self){
+    if (self==0) return;
+    c_channel_close(self);
+    while (1) { //wait all thread exit
+        size_t _waitingCount;
+        c_locker_enter(self->_locker);
+        _waitingCount=self->_waitingCount;
+        c_locker_leave(self->_locker);
+        if (_waitingCount==0) break;
+        c_this_thread_yield(); //optimize?
+    }
+    assert(self->_curDataCount==0); // why? if saved resource then leaks
+    _thread_obj_free(c_locker_delete,self->_locker);
+    _thread_obj_free(c_condvar_delete,self->_sendCond);
+    _thread_obj_free(c_condvar_delete,self->_acceptCond);
+}
+
+void c_channel_close(struct c_channel_t* self){
+    if (self->_isClosed) return;
+    
+    c_locker_enter(self->_locker);
+    if (!self->_isClosed){
+        self->_isClosed=c_mt_bool_TRUE;
+        c_condvar_broadcast(self->_sendCond);
+        c_condvar_broadcast(self->_acceptCond);
+    }
+    c_locker_leave(self->_locker);
+}
+
+    static inline void _dataList_push_back(struct c_channel_t* self,TChanData data){
+        if (self->_maxDataCount==0){
+            assert(self->_curDataCount==0);
+            self->_dataList[0]=data;
+            self->_curDataCount=1;
+        }else{
+            size_t writeDataIndex=(self->_readDataIndex+self->_curDataCount);
+            assert(self->_curDataCount<self->_maxDataCount);
+            writeDataIndex-=(writeDataIndex<self->_maxDataCount)?0:self->_maxDataCount;
+            self->_dataList[writeDataIndex]=data;
+            self->_curDataCount++;
+        }
+    }
+
+    static inline TChanData _dataList_pop_front(struct c_channel_t* self){
+        TChanData result;
+        if (self->_maxDataCount==0){
+            assert(self->_curDataCount==1);
+            result=self->_dataList[0];
+            self->_curDataCount=0;
+            return result;
+        }else{
+            assert(self->_curDataCount>0);
+            result=self->_dataList[self->_readDataIndex];
+            self->_readDataIndex++;
+            self->_readDataIndex-=(self->_readDataIndex<self->_maxDataCount)?0:self->_maxDataCount;
+            self->_curDataCount--;
+            return result;
+        }
+    }
+
+c_mt_bool_t c_channel_send(struct c_channel_t* self,TChanData data,c_mt_bool_t isWait){
+    assert(data!=0);
+    {//push data
+        c_mt_bool_t isWaitAccepted=c_mt_bool_FALSE;
+        c_mt_bool_t result=c_mt_bool_FALSE;
+        c_locker_enter(self->_locker);
+        while (1) {
+            if (self->_isClosed) break;
+            if ((self->_curDataCount<self->_maxDataCount)||((self->_maxDataCount==0)&(self->_curDataCount==0))) {
+                _dataList_push_back(self,data);
+                c_condvar_signal(self->_acceptCond);
+                result=c_mt_bool_TRUE; //ok
+                isWaitAccepted=(self->_maxDataCount==0);// must wait accepted?
+                break;
+            }else if(!isWait){
+                break;
+            }//else wait
+            ++self->_waitingCount;
+            c_condvar_wait(self->_sendCond,self->_locker);
+            --self->_waitingCount;
+        }
+        c_locker_leave(self->_locker);
+        if (!isWaitAccepted) return result;
+    }
+
+    //wait accepted when maxDataCount==0
+    while (1) { //wait _dataList empty
+        c_mt_bool_t isExit;
+        c_locker_enter(self->_locker);
+        isExit=(self->_isClosed||(self->_curDataCount==0));
+        c_locker_leave(self->_locker);
+        if (isExit) return c_mt_bool_TRUE;
+        c_this_thread_yield(); //optimize?
+    }
+}
+
+TChanData c_channel_accept(struct c_channel_t* self,c_mt_bool_t isWait){
+    TChanData result=0;
+    c_locker_enter(self->_locker);
+    while (1) {
+        if (self->_curDataCount>0){
+            result=_dataList_pop_front(self);
+            if (!self->_isClosed)
+                c_condvar_signal(self->_sendCond);
+            break; //ok
+        }else if(self->_isClosed){
+            break;
+        }else if(!isWait){
+            break;
+        }//else wait
+        ++self->_waitingCount;
+        c_condvar_wait(self->_acceptCond,self->_locker);
+        --self->_waitingCount;
+    }
+    c_locker_leave(self->_locker);
+    return result;
+}
+
+
