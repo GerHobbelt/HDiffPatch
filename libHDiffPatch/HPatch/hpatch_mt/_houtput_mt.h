@@ -1,8 +1,8 @@
-//  ref_stream.h
-//  dir patch
+//  houtput_mt.h
+//  hpatch
 /*
  The MIT License (MIT)
- Copyright (c) 2018-2019 HouSisong
+ Copyright (c) 2025 HouSisong
  
  Permission is hereby granted, free of charge, to any person
  obtaining a copy of this software and associated documentation
@@ -24,38 +24,26 @@
  WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  OTHER DEALINGS IN THE SOFTWARE.
- */
-#ifndef DirPatch_ref_stream_h
-#define DirPatch_ref_stream_h
-#include "dir_patch_types.h"
-#if (_IS_NEED_DIR_DIFF_PATCH)
+*/
+#ifndef _houtput_mt_h
+#define _houtput_mt_h
+#include "_hpatch_mt.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
-    
-//Simulate an input stream using refList;
-typedef struct hpatch_TRefStream{
-    const hpatch_TStreamInput*  stream;
-//private:
-    hpatch_TStreamInput         _stream;
-    
-    const hpatch_TStreamInput** _refList;
-    hpatch_StreamPos_t*         _rangeEndList;
-    size_t                      _rangeCount;//==refCount
-    size_t                      _curRangeIndex;
-    size_t                      kAlignSize;
-    //mem
-    void*                       _buf;
-} hpatch_TRefStream;
+#if (_IS_USED_MULTITHREAD)
 
-hpatch_inline static
-void        hpatch_TRefStream_init(hpatch_TRefStream* self) { memset(self,0,sizeof(*self)); }
-hpatch_BOOL hpatch_TRefStream_open(hpatch_TRefStream* self,const hpatch_TStreamInput** refList,
-                                   size_t refCount,size_t kAlignSize);
-void        hpatch_TRefStream_close(hpatch_TRefStream* self);
+size_t                houtput_mt_t_memSize();
 
+// create a new hpatch_TStreamOutput* wrapper base_stream;
+//   start a thread to write data to base_stream
+hpatch_TStreamOutput* houtput_mt_open(void* pmem,size_t memSize,struct hpatch_mt_t* h_mt,struct hpatch_TWorkBuf* freeBufList,
+                                      const hpatch_TStreamOutput* base_stream,hpatch_StreamPos_t curWritePos);
+
+hpatch_BOOL           houtput_mt_close(hpatch_TStreamOutput* houtput_mt_stream);
+
+#endif //_IS_USED_MULTITHREAD
 #ifdef __cplusplus
 }
 #endif
-#endif
-#endif //DirPatch_ref_stream_h
+#endif //_houtput_mt_h

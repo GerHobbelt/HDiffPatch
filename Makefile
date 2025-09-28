@@ -236,7 +236,7 @@ endif
 ifeq ($(MT),0)
 else
   HDIFF_OBJ += \
-    libParallel/parallel_import.o \
+    libParallel/parallel_import_c.o \
     libParallel/parallel_channel.o \
     compress_parallel.o
 endif
@@ -365,8 +365,7 @@ ifeq ($(MT),0)
 else
   DEF_FLAGS += \
     -DZSTD_MULTITHREAD=1 \
-    -D_IS_USED_MULTITHREAD=1 \
-    -D_IS_USED_CPP11THREAD=1
+    -D_IS_USED_MULTITHREAD=1
 endif
 
 PATCH_LINK := 
