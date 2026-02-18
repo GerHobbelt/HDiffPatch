@@ -33,6 +33,16 @@
 #   include <windows.h> //FindFirstFileW ...
 #else
 #   include <dirent.h> //opendir ...
+#   ifndef _IS_NO_dirent_d_type
+#       ifdef __QNX__
+#           define _IS_NO_dirent_d_type     1
+#       else
+#           define _IS_NO_dirent_d_type     0
+#       endif
+#   endif
+#   if (_IS_NO_dirent_d_type)
+#       include <sys/stat.h> //stat
+#   endif
 #endif
 
 #ifdef _WIN32
@@ -101,152 +111,88 @@ void hdiff_dirClose(hdiff_TDirHandle dirHandle){
         free(finder);
     }
 }
+// _WIN32
+#else  
+// linux-like
 
-#elif defined(_QNX_) 
-
-struct _hdiff_TFindFileData 
-{
-    DIR*                handle;
-    char                dirPath[hpatch_kPathMaxSize];  // 保存目录路径
-    struct dirent*      entry;      // 当前目录项
-    char                fullPath[hpatch_kPathMaxSize];  // 完整路径
-    char                subName_utf8[hpatch_kPathMaxSize];  // 文件名（UTF-8）
-};
-
-hdiff_TDirHandle hdiff_dirOpenForRead(const char* dir_utf8)
-{
-    if(!dir_utf8 || *dir_utf8 == '\0')
-    {
-        return 0;
-    }
-
-    struct _hdiff_TFindFileData* finder = 
-        (struct _hdiff_TFindFileData*)malloc(sizeof(struct _hdiff_TFindFileData));
-    if (finder == nullptr) 
-    {
-        return 0;
-    }
-
-    // 保存目录路径
-    strncpy(finder->dirPath, dir_utf8, hpatch_kPathMaxSize - 1);
-    finder->dirPath[hpatch_kPathMaxSize - 1] = '\0';
-
-    finder->handle = opendir(dir_utf8);
-    if (finder->handle == nullptr) {
-        // 处理特殊情况：目录存在但为空
-        struct stat sb;
-        if (stat(dir_utf8, &sb) == 0 && S_ISDIR(sb.st_mode)) {
-            // 目录存在但为空，返回有效句柄
-            return finder;
-        }
-        free(finder);
-        return 0;
-    }
-    
-    // 读取第一个条目（类似 FindFirstFile）
-    finder->entry = readdir(finder->handle);
-    return finder;
-}
-
-hpatch_BOOL hdiff_dirNext(hdiff_TDirHandle dirHandle,hpatch_TPathType *out_type,const char** out_subName_utf8)
-{
-    assert(dirHandle != 0);
-    struct _hdiff_TFindFileData* finder = (struct _hdiff_TFindFileData*)dirHandle;
-    // 检查目录是否已关闭或遍历完毕
-    if (finder->handle == nullptr) 
-    {
-        *out_subName_utf8 = 0;
-        return hpatch_TRUE; // 退出
-    }
-
-   // 遍历所有目录项
-    while ((finder->entry = readdir(finder->handle)) != nullptr) 
-    {
-        // 跳过 . 和 ..
-        if (strcmp(finder->entry->d_name, ".") == 0 || 
-            strcmp(finder->entry->d_name, "..") == 0) {
-            continue;
-        }
-        
-        // 获取文件名
-        strncpy(finder->subName_utf8, finder->entry->d_name, hpatch_kPathMaxSize - 1);
-        finder->subName_utf8[hpatch_kPathMaxSize - 1] = '\0';
-        *out_subName_utf8 = finder->subName_utf8;
-        
-        // 构造完整路径以用于 stat
-        snprintf(finder->fullPath, hpatch_kPathMaxSize, "%s/%s", 
-                 finder->dirPath,
-                 finder->entry->d_name);
-        
-        // 使用 stat 获取文件类型
-        struct stat sb;
-        if (stat(finder->fullPath, &sb) == 0) 
-        {
-            if (S_ISDIR(sb.st_mode)) {
-                *out_type = kPathType_dir;
-                *out_subName_utf8 = finder->fullPath;
-            } else {
-                *out_type = kPathType_file;
-                *out_subName_utf8 = finder->fullPath;
-            }
-            return hpatch_TRUE;
-        }
-    }
-    
-    // 遍历完毕
-    *out_subName_utf8 = 0;
-    return hpatch_TRUE;
-    
-}
-
-void hdiff_dirClose(hdiff_TDirHandle dirHandle) 
-{
-    struct _hdiff_TFindFileData* finder = (struct _hdiff_TFindFileData*)dirHandle;
-    if (finder != NULL) 
-    {
-        if (finder->handle != NULL) {
-            closedir(finder->handle);
-        }
-        free(finder);
-    }
-}
-
-#else
+    struct _hdiff_TDIRData{
+        DIR*        handle;
+  #if (_IS_NO_dirent_d_type)
+        char        dirName[hpatch_kPathMaxSize];
+  #endif
+    };
 
 hdiff_TDirHandle hdiff_dirOpenForRead(const char* dir_utf8){
-    hdiff_TDirHandle h=opendir(dir_utf8);
-    if (!h) return 0; //error
-    return h;
+    _hdiff_TDIRData* pdir=(_hdiff_TDIRData*)malloc(sizeof(_hdiff_TDIRData));
+    if (pdir==0) return 0; //error
+    pdir->handle=opendir(dir_utf8);
+    if (!pdir->handle) { hdiff_dirClose(pdir); return 0; }//error
+    {
+    #if (_IS_NO_dirent_d_type)
+        const size_t slen=strlen(dir_utf8);
+        if (slen>hpatch_kPathMaxSize-1) { hdiff_dirClose(pdir); return 0; }//error
+        memcpy(pdir->dirName,dir_utf8,slen+1);
+    #endif
+    }
+    return pdir;
 }
 
 hpatch_BOOL hdiff_dirNext(hdiff_TDirHandle dirHandle,hpatch_TPathType *out_type,const char** out_subName_utf8){
     assert(dirHandle!=0);
-    DIR* pdir =(DIR*)dirHandle;
-    struct dirent* pdirent = readdir(pdir);
-    if (pdirent==0){
-        *out_subName_utf8=0; //finish
-        return hpatch_TRUE;
-    }
-    
-    if (pdirent->d_type==DT_DIR){
-        *out_type=kPathType_dir;
+    _hdiff_TDIRData* pdir=(_hdiff_TDIRData*)dirHandle;
+    while (1){
+        struct dirent* pdirent = readdir(pdir->handle);
+        if (pdirent==0){
+            *out_subName_utf8=0; //finish
+            return hpatch_TRUE;
+        }
+        if ((strcmp(pdirent->d_name,".")==0) || (strcmp(pdirent->d_name,"..")==0))
+            continue; //next
+
+    #if (_IS_NO_dirent_d_type)
+        {
+            struct stat s;
+            char fullName_utf8[hpatch_kPathMaxSize];
+            int slen=snprintf(fullName_utf8,hpatch_kPathMaxSize,"%s/%s",pdir->dirName,pdirent->d_name);
+            if ((slen<=0)||(slen>=hpatch_kPathMaxSize)) return hpatch_FALSE;
+            if (stat(fullName_utf8,&s)!=0) return hpatch_FALSE;
+            if ((s.st_mode&S_IFMT)==S_IFDIR)
+                *out_type=kPathType_dir;
+            else if ((s.st_mode&S_IFMT)==S_IFREG)
+                *out_type=kPathType_file;
+          #if (_IS_NEED_BLOCK_DEV)
+            else if ((s.st_mode&S_IFMT)==S_IFBLK)
+                *out_type=kPathType_file;
+          #endif
+            else
+                continue; //next
+        }
+    #else
+        if (pdirent->d_type==DT_DIR)
+            *out_type=kPathType_dir;
+        else if (pdirent->d_type==DT_REG)
+            *out_type=kPathType_file;
+        #if (_IS_NEED_BLOCK_DEV)
+        else if (pdirent->d_type==DT_BLK)
+            *out_type=kPathType_file;
+        #endif
+        else
+            continue; //next
+    #endif
         *out_subName_utf8=pdirent->d_name;
         return hpatch_TRUE;
-    }else if (pdirent->d_type==DT_REG){
-        *out_type=kPathType_file;
-        *out_subName_utf8=pdirent->d_name;
-        return hpatch_TRUE;
-    }else{
-        return hdiff_dirNext(dirHandle,out_type,out_subName_utf8);
     }
 }
 
 void hdiff_dirClose(hdiff_TDirHandle dirHandle){
-    if (dirHandle)
-        closedir((DIR*)dirHandle);
+    _hdiff_TDIRData* pdir=(_hdiff_TDIRData*)dirHandle;
+    if (pdir){
+        if (pdir->handle) closedir((DIR*)pdir->handle);
+        free(pdir);
+    }
 }
 
-#endif // if _WIN32 else
+#endif // _WIN32 & linux-like
 #endif // _IS_NEED_DIR_DIFF_PATCH
 
 
