@@ -235,7 +235,7 @@ hpatch_BOOL hcache_old_mt_close(hpatch_TStreamInput* hcache_old_mt_stream){
     hcache_old_mt_stream->streamImport=0;
 
     result=(!self->mt_base.isOnError)&&(self->curDataBuf==0)&&(self->covers_cache==0)
-            &((self->leaveCoverCount==0)||(self->leaveCoverCount==~(hpatch_StreamPos_t)0));
+            &&((self->leaveCoverCount==0)||(self->leaveCoverCount==~(hpatch_StreamPos_t)0));
     _hcache_old_mt_free(self);
     return result;
 }

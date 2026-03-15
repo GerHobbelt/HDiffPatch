@@ -2,6 +2,10 @@
 
 full changelog at: https://github.com/sisong/HDiffPatch/commits   
 
+## [v4.12.2](https://github.com/sisong/HDiffPatch/tree/v4.12.2) - 2026-03-09
+### Fixed
+*  Fixed the linking libhpatchz.a error in iOS & MacOS SDK;
+
 ## [v4.12.1](https://github.com/sisong/HDiffPatch/tree/v4.12.1) - 2026-01-13
 ### Added
 * support dir-diff & dir-patch on QNX OS; by contributor [xiongpan(Oshienai96)](https://github.com/Oshienai96);

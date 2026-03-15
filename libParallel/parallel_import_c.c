@@ -26,6 +26,7 @@
  */
 #include "parallel_import_c.h"
 
+#if (_IS_USED_MULTITHREAD)
 #if (_IS_USED_PTHREAD)
 #   include <pthread.h>
 #   if ((defined _WIN32)||(defined WIN32))
@@ -494,4 +495,5 @@ TChanData c_channel_accept(struct c_channel_t* self,c_mt_bool_t isWait){
     return result;
 }
 
+#endif //_IS_USED_MULTITHREAD
 
