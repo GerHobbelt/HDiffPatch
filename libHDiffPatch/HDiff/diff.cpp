@@ -168,7 +168,7 @@ static TInt getBestMatch(TInt* out_pos,const TSuffixString& sstring,
             if (leftOk) continue;
         }
         TInt i = sai + (1-(mdi&1)*2) * ((mdi+1)/2);
-        if ((i<0)|(i>=(src_end-src_begin))) continue;
+        if ((i<0)||(i>=(src_end-src_begin))) continue;
         TInt curOldPos=sstring.SA(i);
 
         TInt curLength;
@@ -1641,7 +1641,7 @@ struct TPatchiListener:public hpatchi_listener_t{
     static hpi_BOOL _read_old(struct hpatchi_listener_t* listener,hpi_pos_t read_from_pos,hpi_byte* out_data,hpi_size_t data_size){
         TPatchiListener& self=*(TPatchiListener*)listener;
         size_t dsize=self.oldData_end-self.oldData;
-        if ((read_from_pos>dsize)|(data_size>(size_t)(dsize-read_from_pos))) return hpi_FALSE;
+        if ((read_from_pos>dsize)||(data_size>(size_t)(dsize-read_from_pos))) return hpi_FALSE;
         memcpy(out_data,self.oldData+(size_t)read_from_pos,data_size);
         if (self.isInplacePatch){
             if (read_from_pos<self.newData_cur_pos)

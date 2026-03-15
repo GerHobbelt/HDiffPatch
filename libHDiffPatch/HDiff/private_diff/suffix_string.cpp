@@ -299,7 +299,7 @@ TInt TSuffixString::lower_bound(const TChar* str,const TChar* str_end)const{
     //assert(str_end-str>=2);
     #define kMinStrLen 2
 #endif
-    if ((kMinStrLen>=2)&(m_cached2char_range!=0)){
+    if ((kMinStrLen>=2)&&(m_cached2char_range!=0)){
         size_t cc=((size_t)str[1]) | (((size_t)str[0])<<8);
         size_t r0,r1;
         if (isUseLargeSA()){
