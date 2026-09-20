@@ -164,7 +164,8 @@ hpatchMTSets_t _hpatch_getMTSets(hpatch_StreamPos_t newSize,hpatch_StreamPos_t o
           #endif // _IS_NEED_CACHE_OLD_BY_COVERS
         }else{
             kMinTempCacheSize=objsMemSize+kBetterBufNodeSize*(workBufCount+kCacheCount)+(kAlignSize-1);
-            if (!_patch_is_can_cache_window_old_canUsedSize(windowOldBufSize,stepMemSize,kMinTempCacheSize,temp_cacheSumSize)>0){
+            if (_patch_is_can_cache_window_old_canUsedSize(windowOldBufSize,stepMemSize,kMinTempCacheSize,
+                                                           temp_cacheSumSize,oldSize)<=0){
                 mtsets.readOld_isMT=0; // not use MT.
             }
         }
@@ -300,7 +301,8 @@ static _mt_manager_base_t* _mt_manager_base_open(const hpatch_TStreamOutput** po
         if (mtsets.readOld_isMT){
             assert(windowOldBufSize>0);
             kMinTempCacheSize=objsMemSize+kBetterBufNodeSize*(workBufCount+kCacheCount)+(kAlignSize-1);
-            windowOldBufSize=_patch_is_can_cache_window_old_canUsedSize(windowOldBufSize,stepMemSize,kMinTempCacheSize,(temp_cache_end-temp_cache));
+            windowOldBufSize=_patch_is_can_cache_window_old_canUsedSize(windowOldBufSize,stepMemSize,kMinTempCacheSize,
+                                                                        (temp_cache_end-temp_cache),(*poldData)->streamSize);
             assert(windowOldBufSize>0);
         }
     }
@@ -383,9 +385,9 @@ hpatch_BOOL _mt_manager_base_close(struct _mt_manager_base_t* self,hpatch_BOOL i
     _mt_obj_free(hinput_mt_close,     self->decDiffData);
     _mt_obj_free(houtput_mt_close,    self->newData);
     if (!isWindow){
-        _mt_obj_free(hcache_old_mt_close,(hpatch_TStreamInput*)self->_old);
+        _mt_obj_free(hcache_old_mt_close,*(hpatch_TStreamInput**)&self->_old);
     }else{
-        _mt_obj_free(hcache_window_old_close,(struct hcache_window_old_mt_t*)self->_old);
+        _mt_obj_free(hcache_window_old_close,*(struct hcache_window_old_mt_t**)&self->_old);
     }
     if (self->h_mt) { isOnError|=!hpatch_mt_close(self->h_mt,isOnError); self->h_mt=0; }
     return !isOnError;
@@ -438,7 +440,6 @@ struct hpatch_mt_manager_win_t* hpatch_mt_manager_win_open(const hpatch_TStreamO
 
 struct hcache_window_old_mt_t* hpatch_mt_manager_win_oldCache(struct hpatch_mt_manager_win_t* self){
     if (!self) return 0;
-    assert(self->base._old!=0);
     return (struct hcache_window_old_mt_t*)self->base._old;
 }
 

@@ -75,8 +75,12 @@ const size_t patch_threadNum=1; // 1..5;  1 single-thread, >1 multi-threads
 #include "../../hsynz/dict_decompress_plugin_demo.h" // https://github.com/sisong/hsynz
 #endif
 
+//#define _ChecksumPlugin_crc32
 #define _ChecksumPlugin_fadler64
 #include "../checksum_plugin_demo.h"
+//static hpatch_TChecksum* hsynzStrongChecksum=&crc32ChecksumPlugin; //not strong enough for hsynz, just for testing.  
+static hpatch_TChecksum* hsynzStrongChecksum=&fadler64ChecksumPlugin; //can't be used for hsynz, just for testing.  
+static hpatch_TChecksum* hWinDiffChecksum=&fadler64ChecksumPlugin;
 
 #ifdef  _CompressPlugin_no
     const hdiff_TCompress* compressPlugin=0;
@@ -234,8 +238,6 @@ static bool check_diff_stream(const TByte* newData,const TByte* newData_end,
     return true;
 }
 
-static hpatch_TChecksum* hsynzDefaultChecksum=&fadler64ChecksumPlugin;
-static hpatch_TChecksum* hdiffwDefaultChecksum=&fadler64ChecksumPlugin;
 
 struct TSyncInfoListener:public ISyncInfoListener{
     inline TSyncInfoListener(){
@@ -246,7 +248,7 @@ struct TSyncInfoListener:public ISyncInfoListener{
         findChecksumPlugin=_findChecksumPlugin;
     }
     static hpatch_TChecksum* _findChecksumPlugin(ISyncInfoListener* listener,const char* strongChecksumType){
-        return hsynzDefaultChecksum;
+        return hsynzStrongChecksum;
     }
     static hsync_TDictDecompress* _findDecompressPlugin(ISyncInfoListener* listener,const char* compressType,size_t dictSize){
 #if defined(_CompressPlugin_ldef)
@@ -306,7 +308,7 @@ static void _create_hsynz_diff(const TByte* newData,const TByte* newData_end,
     TVectorAsStreamOutput hiStream(_hsyniData);
     TVectorAsStreamOutput hzStream(_hsynzData);
     create_sync_data(&newStream,&hiStream,&hzStream,
-                     hsynzDefaultChecksum,_getDictCompressPlugin(),0,kSyncBlockSize_min);
+                     hsynzStrongChecksum,_getDictCompressPlugin(),0,kSyncBlockSize_min);
 
     //local diff
     struct hpatch_TStreamInput  oldStream;
@@ -320,7 +322,7 @@ static void _create_hsynz_diff(const TByte* newData,const TByte* newData_end,
     ret=TNewDataSyncInfo_open(&newSyncInfo,(const hpatch_TStreamInput*)&hiStream,hpatch_FALSE,&syncInfoListener);
     if (ret!=0) throw std::runtime_error("TNewDataSyncInfo_open() error!");
     ret=sync_local_diff(&syncInfoListener,&readSyncDataListener,&oldStream,
-                        &newSyncInfo,&diffStream,kSyncDiff_default,0,1);
+                        &newSyncInfo,&diffStream,kSyncDiff_default,0,patch_threadNum);
     TNewDataSyncInfo_close(&newSyncInfo);
     if (ret!=0) throw std::runtime_error("sync_local_diff() error!");
 }
@@ -348,7 +350,7 @@ static hpatch_BOOL _hsynz_local_patch(unsigned char* out_newData,unsigned char* 
         throw std::runtime_error("TNewDataSyncInfo_open() error!");
 #endif
     }
-    ret=sync_local_patch(&syncInfoListener,&diffStream,&oldStream,&newSyncInfo,&out_newStream,0,1);
+    ret=sync_local_patch(&syncInfoListener,&diffStream,&oldStream,&newSyncInfo,&out_newStream,0,patch_threadNum);
     TNewDataSyncInfo_close(&newSyncInfo);
     if (ret!=0){
 #ifdef _AttackPacth_ON
@@ -471,7 +473,7 @@ static hpatch_BOOL _winpatch_onDiffInfo(struct winpatch_listener_t* listener,
                                          const hpatch_windowDiffInfo* info,
                                          hpatch_TDecompress** out_decompressPlugin,
                                          hpatch_TChecksum** out_checksumPlugin,
-                                         hpatch_BOOL* isCheckSumNew,hpatch_BOOL* isCheckSumOld,hpatch_BOOL* isCheckSumDiff,
+                                         hpatch_BOOL* isChecksumNew,hpatch_BOOL* isChecksumOld,hpatch_BOOL* isChecksumDiff,
                                          unsigned char** out_temp_cache,
                                          unsigned char** out_temp_cacheEnd){
     size_t temp_cache_size=(size_t)(info->maxWindowOldSize+info->maxStepMemSize)+hpatch_kFileIOBufBetterSize*3;
@@ -480,10 +482,10 @@ static hpatch_BOOL _winpatch_onDiffInfo(struct winpatch_listener_t* listener,
     *out_temp_cache=temp_cache;
     *out_temp_cacheEnd=temp_cache+temp_cache_size;
     *out_decompressPlugin=decompressPlugin;
-    *out_checksumPlugin=&fadler64ChecksumPlugin;
-    *isCheckSumNew=hpatch_TRUE;
-    *isCheckSumOld=hpatch_TRUE;
-    *isCheckSumDiff=hpatch_TRUE;
+    *out_checksumPlugin=hWinDiffChecksum;
+    *isChecksumNew=hpatch_TRUE;
+    *isChecksumOld=hpatch_TRUE;
+    *isChecksumDiff=hpatch_TRUE;
     return hpatch_TRUE;
 }
 
@@ -654,7 +656,7 @@ long test(const TByte* newData,const TByte* newData_end,
         create_single_compressed_diff(newData,newData_end,oldData,oldData_end,diffData,compressPlugin);
         if (out_diffSizes) out_diffSizes[kDiffS]+=diffData.size();
         if (!check_single_compressed_diff(newData,newData_end,oldData,oldData_end,
-                                          diffData.data(),diffData.data()+diffData.size(),decompressPlugin)){
+                                          diffData.data(),diffData.data()+diffData.size(),decompressPlugin,patch_threadNum)){
             printf("\n diffs error!!! tag:%s\n",tag);
             ++result;
         }else{
@@ -796,13 +798,13 @@ long test(const TByte* newData,const TByte* newData_end,
         mem_as_hStreamInput(&oldStream,oldData,oldData_end);
 
         create_window_diff(&newStream,&oldStream,&out_diffStream,
-                            compressPlugin,hdiffwDefaultChecksum,
+                            compressPlugin,hWinDiffChecksum,
                             kDefaultPatchStepMemSize,1024*16,0,1024*4,0);
         if (out_diffSizes) out_diffSizes[kDiffW]+=diffData.size();
         struct hpatch_TStreamInput in_diffStream;
         mem_as_hStreamInput(&in_diffStream,diffData.data(),diffData.data()+diffData.size());
         if (kWindowPatch_ok!=check_window_diff(&newStream,&oldStream,&in_diffStream,
-                                                decompressPlugin,hdiffwDefaultChecksum)){
+                                                decompressPlugin,hWinDiffChecksum,patch_threadNum)){
             printf("\n diffw error!!! tag:%s\n",tag);
             ++result;
         }else{

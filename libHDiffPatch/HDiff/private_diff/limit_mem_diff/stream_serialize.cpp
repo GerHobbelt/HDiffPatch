@@ -1042,7 +1042,7 @@ hpatch_BOOL TChecksumInputStream::_read(const hpatch_TStreamInput* stream,hpatch
     if (self->_isChecksuming){
         if (!self->_isRandomAccess){//sequential mode
             if (readEnd>self->_checkedPos){
-                size_t clen=readEnd-self->_checkedPos;
+                size_t clen=(size_t)(readEnd-self->_checkedPos);
                 self->_checksumPlugin->append(self->_checksumHandle,out_data_end-clen,out_data_end);
                 self->_checkedPos=readEnd;
             }
@@ -1114,10 +1114,8 @@ TWindowDiffStream::TWindowDiffStream(const hpatch_TStreamInput* newStream,const 
             window.newLength=newDataSize-window.newPos;
 
         const hpatch_StreamPos_t windowEnd=window.newPos+window.newLength;
-        const TCover* coverEnd=std::lower_bound(covers._covers+coveri,
-            covers._covers+covers._coverCount,
-            windowEnd,cover_cmp_by_new_t<TCover>());
-        size_t curCoverEndi=coverEnd-covers._covers;
+        const TCover* coverEnd=std::lower_bound(&covers[coveri],&covers[covers.size()],windowEnd,cover_cmp_by_new_t<TCover>());
+        size_t curCoverEndi=coverEnd-&covers[0];
 
         const hpatch_StreamPos_t windowNewPos=window.newPos;
         const hpatch_StreamPos_t windowOldPos=window.oldPos;
@@ -1229,7 +1227,7 @@ hpatch_BOOL TWindowDiffStream::_read(const hpatch_TStreamInput* stream,hpatch_St
     self->_readFromPos_back=readFromPos+(size_t)(out_data_end-out_data);
 
     if (readFromPos<self->_extraDataSize){//read extraData
-        size_t clen=self->_extraDataSize-readFromPos;
+        size_t clen=(size_t)(self->_extraDataSize-readFromPos);
         clen=std::min(clen,(size_t)(out_data_end-out_data));
         memcpy(out_data,self->_extraData+readFromPos,clen);
         out_data+=clen;

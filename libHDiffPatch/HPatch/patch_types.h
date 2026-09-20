@@ -36,9 +36,9 @@
 extern "C" {
 #endif
 
-#define HDIFFPATCH_VERSION_MAJOR    4
-#define HDIFFPATCH_VERSION_MINOR    12
-#define HDIFFPATCH_VERSION_RELEASE  2
+#define HDIFFPATCH_VERSION_MAJOR    5
+#define HDIFFPATCH_VERSION_MINOR    0
+#define HDIFFPATCH_VERSION_RELEASE  0
 
 #define _HDIFFPATCH_VERSION          HDIFFPATCH_VERSION_MAJOR.HDIFFPATCH_VERSION_MINOR.HDIFFPATCH_VERSION_RELEASE
 #define _HDIFFPATCH_QUOTE(str) #str
@@ -373,15 +373,23 @@ typedef    hpatch_BOOL  hpatch_FileError_t;// 0: no error; other: error;
         hpatch_StreamPos_t  maxSubCoverCount;
         hpatch_StreamPos_t  maxWindowOldSize;
         hpatch_StreamPos_t  checksumByteSize;      //0=no checksum
-        hpatch_StreamPos_t  otherInfoPos;
-        hpatch_StreamPos_t  otherInfoEndPos;
         hpatch_StreamPos_t  extraDataSize;
         hpatch_StreamPos_t  uncompressedSize;      //windowDiffStreamSize
         hpatch_StreamPos_t  compressedSize;        //0=uncompressed, >0=compressed
+        hpatch_StreamPos_t  otherInfoPos;
+        hpatch_StreamPos_t  otherInfoEndPos;
         hpatch_StreamPos_t  windowDataPos;         //window data begin pos; old,new,diff's checksum begin pos=windowDataPos-3*checksumByteSize
+        hpatch_StreamPos_t  _headFixedInfoPos;
         char                compressType[hpatch_kMaxPluginTypeLength+1];
         char                checksumType[hpatch_kMaxPluginTypeLength+1];
     } hpatch_windowDiffInfo;
+    
+    hpatch_inline static void _winDiffInfoToHDiffInfo(hpatch_compressedDiffInfo* out_diffInfo,const hpatch_windowDiffInfo* winDiffInfo){
+        out_diffInfo->newDataSize=winDiffInfo->newDataSize;
+        out_diffInfo->oldDataSize=winDiffInfo->oldDataSize;
+        out_diffInfo->compressedCount=(winDiffInfo->compressedSize>0)?1:0;
+        memcpy(out_diffInfo->compressType,winDiffInfo->compressType,strlen(winDiffInfo->compressType)+1);
+    }
 
     struct hpatch_TChecksum;
     typedef struct winpatch_listener_t{
@@ -390,8 +398,8 @@ typedef    hpatch_BOOL  hpatch_FileError_t;// 0: no error; other: error;
                                   const hpatch_windowDiffInfo* info,
                                   hpatch_TDecompress** out_decompressPlugin,//find decompressPlugin by info->compressType
                                   struct hpatch_TChecksum** out_checksumPlugin, //find checksumPlugin by info->checksumType
-                                  hpatch_BOOL* isCheckSumNew,   // *isCheckSumNew default true when have info->checksumType
-                                  hpatch_BOOL* isCheckSumOld,hpatch_BOOL* isCheckSumDiff, 
+                                  hpatch_BOOL* isChecksumNew,   // *isChecksumNew default true when have info->checksumType
+                                  hpatch_BOOL* isChecksumOld,hpatch_BOOL* isChecksumDiff, 
                                   unsigned char** out_temp_cache,    //*out_temp_cacheEnd-*out_temp_cache == info->maxWindowOldSize + info->stepMemSize + (I/O cache memory)
                                   unsigned char** out_temp_cacheEnd);//  note: (I/O cache memory) >= hpatch_kStreamCacheSize*3
         void        (*onPatchFinish)(struct winpatch_listener_t* listener, //onPatchFinish can null
