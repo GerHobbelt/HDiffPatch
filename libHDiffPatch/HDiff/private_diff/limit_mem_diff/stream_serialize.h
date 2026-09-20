@@ -290,13 +290,16 @@ private:
 struct TChecksumOutputStream:public hpatch_TStreamOutput{
     TChecksumOutputStream();
     void init(const hpatch_TStreamOutput* realOut,hpatch_TChecksum* checksumPlugin,
-              hpatch_checksumHandle checksumHandle);
+              hpatch_checksumHandle checksumHandle,bool isChecksuming,hpatch_StreamPos_t realOut_offset=0);
+    inline void setAutoChecksumBeginPos(hpatch_StreamPos_t autoBeginPos) { _autoChecksumBeginPos=autoBeginPos; }
     inline void setIsChecksuming(bool isChecksuming) { _isChecksuming=isChecksuming; }
 private:
     const hpatch_TStreamOutput*  _realOut;
     hpatch_TChecksum*            _checksumPlugin;
     hpatch_checksumHandle        _checksumHandle;
     hpatch_StreamPos_t           _writePos;
+    hpatch_StreamPos_t           _realOut_offset;
+    hpatch_StreamPos_t           _autoChecksumBeginPos;
     bool                         _isChecksuming;
     static hpatch_BOOL _write(const hpatch_TStreamOutput* stream,hpatch_StreamPos_t writeToPos,
                               const unsigned char* data,const unsigned char* data_end);
@@ -305,14 +308,14 @@ private:
 struct TChecksumInputStream:public hpatch_TStreamInput{
     TChecksumInputStream();
     void init(const hpatch_TStreamInput* realIn,hpatch_TChecksum* checksumPlugin,
-              hpatch_checksumHandle checksumHandle);
+              hpatch_checksumHandle checksumHandle,bool isChecksuming);
     inline void setIsChecksuming(bool isChecksuming) { _isChecksuming=isChecksuming; }
-    void setIsRandomAccess(bool isRandomAccess);
+    inline void setIsRandomAccess(bool isRandomAccess) { _isRandomAccess=isRandomAccess; }
 private:
     const hpatch_TStreamInput*  _realIn;
     hpatch_TChecksum*           _checksumPlugin;
     hpatch_checksumHandle       _checksumHandle;
-    hpatch_StreamPos_t          _readPos;
+    hpatch_StreamPos_t          _checkedPos;
     bool                        _isChecksuming;
     bool                        _isRandomAccess;
     static hpatch_BOOL _read(const hpatch_TStreamInput* stream,hpatch_StreamPos_t readFromPos,
@@ -323,14 +326,15 @@ private:
 struct TWindowDiffStream:public hpatch_TStreamInput{
     TWindowDiffStream(const hpatch_TStreamInput* newStream,const hpatch_TStreamInput* oldStream,
                       const TInputCovers& covers,const std::vector<hpatch_TWindow>& windows,
-                      size_t patchStepMemSize,bool isExtendCover,
-                      size_t& outMaxStepMemSize,size_t& outMaxSubCoverCount,hpatch_StreamPos_t& outMaxWindowOldLength);
+                      size_t patchStepMemSize,bool isExtendCover,size_t& outMaxStepMemSize,
+                      size_t& outMaxSubCoverCount,hpatch_StreamPos_t& outMaxWindowOldLength,
+                      hpatch_StreamPos_t windowMetaCount,const unsigned char* extraData,size_t extraDataSize);
     ~TWindowDiffStream();
 private:
     struct WindowData{
         std::vector<TCover>         adjustedCovers;
         hpatch_TWindow              adjustedWindow;
-        std::vector<unsigned char>  metadataBuf; // subCoverCount+oldPos+oldLength packed
+        std::vector<unsigned char>  metadataBuf; // packUInt(subCoverCount) only
         hpatch_StreamPos_t          stepDataSize;
         size_t                      subCoverCount;
     };
@@ -349,8 +353,17 @@ private:
     TStreamClip                     _oldClip;
     hpatch_TStreamInput             _oldMemStream;
     hpatch_StreamPos_t              _readFromPos_back;
+    const unsigned char* const      _extraData;
+    const size_t                    _extraDataSize;
+    hpatch_StreamPos_t                       _windowMetaCount;// metadata batch support
+    std::vector<std::vector<unsigned char> > _metaBatchDatas; // pre-packed batch data
+    std::vector<hpatch_StreamPos_t>          _metaBatchPositions;// stream pos of each batch
+    size_t                                   _nextMetaBatchIdx; // next batch to emit
     void _clear_windowStepStream();
     void _init_windowStepStream(size_t wi,bool isMustLoadOldToMem);
+    void _buildMetaBatches(const std::vector<hpatch_TWindow>& windows);
+    void _appendMetaBatch(const std::vector<hpatch_TWindow>& windows,
+                          size_t start,size_t count,hpatch_StreamPos_t& lastOldPos);
     static hpatch_BOOL _read(const hpatch_TStreamInput* stream,hpatch_StreamPos_t readFromPos,
                              unsigned char* out_data,unsigned char* out_data_end);
 };

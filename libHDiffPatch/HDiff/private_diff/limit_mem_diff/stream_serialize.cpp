@@ -956,7 +956,8 @@ void do_compress(std::vector<unsigned char>& out_code,const hpatch_TStreamInput*
 }
 
 TChecksumOutputStream::TChecksumOutputStream()
-:_realOut(0),_checksumPlugin(0),_checksumHandle(0),_writePos(0),_isChecksuming(false){
+:_realOut(0),_checksumPlugin(0),_checksumHandle(0),_writePos(0),_realOut_offset(0),
+ _autoChecksumBeginPos(0),_isChecksuming(false){
     this->streamImport=this;
     this->streamSize=hpatch_kNullStreamPos;
     this->read_writed=0;
@@ -964,12 +965,14 @@ TChecksumOutputStream::TChecksumOutputStream()
 }
 
 void TChecksumOutputStream::init(const hpatch_TStreamOutput* realOut,hpatch_TChecksum* checksumPlugin,
-                                 hpatch_checksumHandle checksumHandle){
+                                 hpatch_checksumHandle checksumHandle,bool isChecksuming,hpatch_StreamPos_t realOut_offset){
+    assert(realOut&&checksumPlugin&&checksumHandle);
     _realOut=realOut;
     _checksumPlugin=checksumPlugin;
     _checksumHandle=checksumHandle;
-    _isChecksuming=(checksumPlugin!=0);
+    _isChecksuming=isChecksuming;
     _writePos=0;
+    _realOut_offset=realOut_offset;
     this->streamImport=this;
     this->streamSize=realOut->streamSize;
     this->read_writed=0;
@@ -980,9 +983,13 @@ hpatch_BOOL TChecksumOutputStream::_write(const hpatch_TStreamOutput* stream,hpa
                                           const unsigned char* data,const unsigned char* data_end){
     TChecksumOutputStream* self=(TChecksumOutputStream*)stream->streamImport;
     hpatch_StreamPos_t writeEnd=writeToPos+(size_t)(data_end-data);
-    if (!self->_realOut->write(self->_realOut,writeToPos,data,data_end)) return hpatch_FALSE;
+    if (!self->_realOut->write(self->_realOut,self->_realOut_offset+writeToPos,data,data_end)) return hpatch_FALSE;
 
     if (self->_isChecksuming){
+        if (self->_autoChecksumBeginPos==writeToPos){ //reset checksum
+            self->_checksumPlugin->begin(self->_checksumHandle);
+            self->_writePos=writeToPos;
+        }
         checki(writeToPos==self->_writePos,"TChecksumOutputStream::write() writeToPos error!");
         self->_checksumPlugin->append(self->_checksumHandle,data,data_end);
     }
@@ -991,7 +998,7 @@ hpatch_BOOL TChecksumOutputStream::_write(const hpatch_TStreamOutput* stream,hpa
 }
 
 TChecksumInputStream::TChecksumInputStream()
-:_realIn(0),_checksumPlugin(0),_checksumHandle(0),_readPos(0),
+:_realIn(0),_checksumPlugin(0),_checksumHandle(0),_checkedPos(0),
  _isChecksuming(false),_isRandomAccess(false){
     this->streamImport=this;
     this->streamSize=0;
@@ -999,43 +1006,91 @@ TChecksumInputStream::TChecksumInputStream()
 }
 
 void TChecksumInputStream::init(const hpatch_TStreamInput* realIn,hpatch_TChecksum* checksumPlugin,
-                                hpatch_checksumHandle checksumHandle){
+                                hpatch_checksumHandle checksumHandle,bool isChecksuming){
+    assert(realIn&&checksumPlugin&&checksumHandle);
     _realIn=realIn;
     _checksumPlugin=checksumPlugin;
     _checksumHandle=checksumHandle;
-    _readPos=0;
-    _isChecksuming=(checksumPlugin!=0);
+    _checkedPos=0;
+    _isChecksuming=isChecksuming;
     _isRandomAccess=false;
     this->streamImport=this;
     this->streamSize=realIn->streamSize;
     this->read=_read;
 }
 
-void TChecksumInputStream::setIsRandomAccess(bool isRandomAccess){
-    _isRandomAccess=isRandomAccess;
-}
-
 hpatch_BOOL TChecksumInputStream::_read(const hpatch_TStreamInput* stream,hpatch_StreamPos_t readFromPos,
-                                         unsigned char* out_data,unsigned char* out_data_end){
+                                        unsigned char* out_data,unsigned char* out_data_end){
     TChecksumInputStream* self=(TChecksumInputStream*)stream->streamImport;
+    if ((self->_isChecksuming)&&(!self->_isRandomAccess)&&(readFromPos>self->_checkedPos)){ //sequential mode gap
+        unsigned char _lc_buf[1024*16];
+        size_t          bufSize=(size_t)(out_data_end-out_data);
+        unsigned char*  pbuf=out_data;
+        if (bufSize<sizeof(_lc_buf)){ pbuf=_lc_buf; bufSize=sizeof(_lc_buf); }
+        while (readFromPos>self->_checkedPos){
+            hpatch_StreamPos_t rlen=readFromPos-self->_checkedPos;
+            if (rlen>bufSize) rlen=bufSize;
+            if (!self->_realIn->read(self->_realIn,self->_checkedPos,pbuf,pbuf+rlen)) return hpatch_FALSE;
+            self->_checksumPlugin->append(self->_checksumHandle,pbuf,pbuf+rlen);
+            self->_checkedPos+=rlen;
+        }
+    }
+
     hpatch_StreamPos_t readEnd=readFromPos+(size_t)(out_data_end-out_data);
     if (!self->_realIn->read(self->_realIn,readFromPos,out_data,out_data_end)) return hpatch_FALSE;
 
     if (self->_isChecksuming){
-        if (!self->_isRandomAccess)//sequential mode
-            checki(readFromPos==self->_readPos,"TChecksumInputStream::read() readFromPos error!");
-        self->_checksumPlugin->append(self->_checksumHandle,out_data,out_data_end);
+        if (!self->_isRandomAccess){//sequential mode
+            if (readEnd>self->_checkedPos){
+                size_t clen=readEnd-self->_checkedPos;
+                self->_checksumPlugin->append(self->_checksumHandle,out_data_end-clen,out_data_end);
+                self->_checkedPos=readEnd;
+            }
+        }else{//random access mode
+            self->_checksumPlugin->append(self->_checksumHandle,out_data,out_data_end);
+        }
     }
-    self->_readPos=readEnd;
     return hpatch_TRUE;
+}
+
+void TWindowDiffStream::_appendMetaBatch(const std::vector<hpatch_TWindow>& windows,
+                                          size_t start,size_t count,hpatch_StreamPos_t& lastOldPos){
+    std::vector<unsigned char> batch;
+    for (size_t i=0;i<count;++i){
+        const hpatch_TWindow& w=windows[start+i];
+        int sign=(w.oldPos>=lastOldPos)?0:1;
+        hpatch_StreamPos_t delta=sign?(lastOldPos-w.oldPos):(w.oldPos-lastOldPos);
+        packUInt(batch,w.oldLength);
+        packUIntWithTag(batch,delta,sign,1);
+        lastOldPos=w.oldPos+w.oldLength;
+    }
+    _metaBatchDatas.push_back(batch);
+}
+
+void TWindowDiffStream::_buildMetaBatches(const std::vector<hpatch_TWindow>& windows){
+    const hpatch_StreamPos_t metaCount=_windowMetaCount;
+    const hpatch_StreamPos_t halfMetaCount=metaCount>>1;
+    hpatch_StreamPos_t lastOldPos=0;
+
+    {//batch 0: first min(metaCount, windows.size()) entries
+        size_t count=std::min((size_t)metaCount,windows.size());
+        _appendMetaBatch(windows,0,count,lastOldPos);
+    }
+    //subsequent batches: halfMetaCount entries each
+    for (size_t start=(size_t)metaCount;start<windows.size();start+=(size_t)halfMetaCount){
+        size_t count=std::min((size_t)halfMetaCount,windows.size()-start);
+        _appendMetaBatch(windows,start,count,lastOldPos);
+    }
 }
 
 TWindowDiffStream::TWindowDiffStream(const hpatch_TStreamInput* newStream,const hpatch_TStreamInput* oldStream,
                                      const TInputCovers& covers,const std::vector<hpatch_TWindow>& windows,
-                                     size_t patchStepMemSize,bool isExtendCover,
-                                     size_t& outMaxStepMemSize,size_t& outMaxSubCoverCount,hpatch_StreamPos_t& outMaxWindowOldLength)
+                                     size_t patchStepMemSize,bool isExtendCover,size_t& outMaxStepMemSize,
+                                     size_t& outMaxSubCoverCount,hpatch_StreamPos_t& outMaxWindowOldLength,
+                                     hpatch_StreamPos_t windowMetaCount,const unsigned char* extraData,size_t extraDataSize)
 :_newStream(newStream),_oldStream(oldStream),_patchStepMemSize(patchStepMemSize),_isExtendCover(isExtendCover),
- _curWindowIndex(0),_curMetadataPos(0),_curStepReadPos(0),_curStepStream(0),_readFromPos_back(0){
+ _curWindowIndex(0),_curMetadataPos(0),_curStepReadPos(0),_curStepStream(0),_readFromPos_back(0),
+ _extraData(extraData),_extraDataSize(extraDataSize),_windowMetaCount(windowMetaCount),_nextMetaBatchIdx(0){
     outMaxStepMemSize=0;
     outMaxSubCoverCount=0;
     outMaxWindowOldLength=0;
@@ -1047,7 +1102,6 @@ TWindowDiffStream::TWindowDiffStream(const hpatch_TStreamInput* newStream,const 
 
     hpatch_StreamPos_t curNewPos=0;
     size_t coveri=0;
-    hpatch_StreamPos_t totalStreamSize=0;
     const hpatch_StreamPos_t newDataSize=newStream->streamSize;
     for (size_t wi=0;wi<windows.size();++wi){
         WindowData& wd=_windowDatas[wi];
@@ -1083,14 +1137,10 @@ TWindowDiffStream::TWindowDiffStream(const hpatch_TStreamInput* newStream,const 
         wd.stepDataSize=stepStream.streamSize;
         wd.subCoverCount=stepStream.getCoverCount();
 
-        {//pack metadata
-            wd.metadataBuf.clear();
-            packUInt(wd.metadataBuf,wd.subCoverCount);
-            packUInt(wd.metadataBuf,wd.adjustedWindow.oldPos);
-            packUInt(wd.metadataBuf,wd.adjustedWindow.oldLength);
-        }
+        //pack subCoverCount only (oldPos/oldLength moved to metadata batches)
+        wd.metadataBuf.clear();
+        packUInt(wd.metadataBuf,wd.subCoverCount);
 
-        totalStreamSize+=wd.metadataBuf.size()+wd.stepDataSize;
         outMaxStepMemSize=std::max(outMaxStepMemSize,stepStream.getMaxStepMemSize());
         outMaxSubCoverCount=std::max(outMaxSubCoverCount,wd.subCoverCount);
 
@@ -1101,8 +1151,36 @@ TWindowDiffStream::TWindowDiffStream(const hpatch_TStreamInput* newStream,const 
     assert(curNewPos==newDataSize);
     _clear_windowStepStream();
 
+    //build metadata batches
+    _buildMetaBatches(windows);
+
+    //compute stream layout: interleave meta batches & window data groups
+    {
+        const hpatch_StreamPos_t halfMetaCount=_windowMetaCount>>1;
+        hpatch_StreamPos_t curPos=_extraDataSize;
+
+        //metadata batch 0
+        _metaBatchPositions.push_back(curPos);
+        curPos+=_metaBatchDatas[0].size();
+
+        for (size_t groupStart=0;groupStart<windows.size();groupStart+=(size_t)halfMetaCount){
+            size_t groupEnd=std::min(groupStart+(size_t)halfMetaCount,windows.size());
+
+            //window data in this group
+            for (size_t wi=groupStart;wi<groupEnd;++wi)
+                curPos+=_windowDatas[wi].metadataBuf.size()+_windowDatas[wi].stepDataSize;
+
+            //metadata batch after this group (if not last)
+            size_t nextBatchIdx=_metaBatchPositions.size();
+            if (nextBatchIdx<_metaBatchDatas.size()){
+                _metaBatchPositions.push_back(curPos);
+                curPos+=_metaBatchDatas[nextBatchIdx].size();
+            }
+        }
+        this->streamSize=curPos;
+    }
+
     this->streamImport=this;
-    this->streamSize=totalStreamSize;
     this->read=_read;
 }
 
@@ -1123,10 +1201,10 @@ void TWindowDiffStream::_init_windowStepStream(size_t wi,bool isMustLoadOldToMem
     const hpatch_TWindow& win=wd.adjustedWindow;
     //load old data into memory
     const hpatch_TStreamInput* curOld=((isMustLoadOldToMem)||(_isExtendCover))?&_oldMemStream:&_oldClip;
-    if (curOld==&_oldMemStream){
+    if (curOld==&_oldMemStream){//NIOTE: for do checksum & random read old speed
         size_t oldLen=(size_t)win.oldLength;
         assert(_oldStreamMem.size()>=oldLen);
-        check(_oldStream->read(_oldStream,win.oldPos,_oldStreamMem.data(),_oldStreamMem.data()+oldLen)); //do checksum
+        check(_oldStream->read(_oldStream,win.oldPos,_oldStreamMem.data(),_oldStreamMem.data()+oldLen)); 
         mem_as_hStreamInput(&_oldMemStream,_oldStreamMem.data(),_oldStreamMem.data()+oldLen);
     }else{
         _oldClip.reset(_oldStream,win.oldPos,win.oldPos+win.oldLength);
@@ -1143,24 +1221,48 @@ hpatch_BOOL TWindowDiffStream::_read(const hpatch_TStreamInput* stream,hpatch_St
         self->_curWindowIndex=0;
         self->_curMetadataPos=0;
         self->_curStepReadPos=0;
+        self->_nextMetaBatchIdx=0;
         self->_clear_windowStepStream();
     }else{
         checki(self->_readFromPos_back==readFromPos,"TWindowDiffStream::read() readFromPos error!");
     }
     self->_readFromPos_back=readFromPos+(size_t)(out_data_end-out_data);
 
-    while (out_data<out_data_end){
-        if (self->_curWindowIndex>=self->_windowDatas.size()) return hpatch_FALSE; //error
+    if (readFromPos<self->_extraDataSize){//read extraData
+        size_t clen=self->_extraDataSize-readFromPos;
+        clen=std::min(clen,(size_t)(out_data_end-out_data));
+        memcpy(out_data,self->_extraData+readFromPos,clen);
+        out_data+=clen;
+        readFromPos+=clen;
+    }
 
+    while (out_data<out_data_end){
+        //check if readFromPos is inside a metadata batch
+        if (self->_nextMetaBatchIdx<self->_metaBatchPositions.size()){
+            hpatch_StreamPos_t batchPos=self->_metaBatchPositions[self->_nextMetaBatchIdx];
+            hpatch_StreamPos_t batchEnd=batchPos+self->_metaBatchDatas[self->_nextMetaBatchIdx].size();
+            if (readFromPos>=batchPos && readFromPos<batchEnd){
+                size_t len=(size_t)(batchEnd-readFromPos);
+                if (len>(size_t)(out_data_end-out_data)) len=(size_t)(out_data_end-out_data);
+                memcpy(out_data,self->_metaBatchDatas[self->_nextMetaBatchIdx].data()+(size_t)(readFromPos-batchPos),len);
+                out_data+=len;
+                readFromPos+=len;
+                if (readFromPos>=batchEnd) self->_nextMetaBatchIdx++;
+                continue;
+            }
+        }
+
+        if (self->_curWindowIndex>=self->_windowDatas.size()) return hpatch_FALSE; //error
         const WindowData& wd=self->_windowDatas[self->_curWindowIndex];
 
-        //read metadata
+        //read subCoverCount
         if (self->_curMetadataPos<wd.metadataBuf.size()){
             size_t len=wd.metadataBuf.size()-self->_curMetadataPos;
             if (len>(size_t)(out_data_end-out_data)) len=(size_t)(out_data_end-out_data);
             memcpy(out_data,wd.metadataBuf.data()+self->_curMetadataPos,len);
             out_data+=len;
             self->_curMetadataPos+=len;
+            readFromPos+=len;
             continue;
         }
 
@@ -1177,6 +1279,7 @@ hpatch_BOOL TWindowDiffStream::_read(const hpatch_TStreamInput* stream,hpatch_St
                                             out_data,out_data+len)) return hpatch_FALSE;
             out_data+=len;
             self->_curStepReadPos+=len;
+            readFromPos+=len;
             continue;
         }
 

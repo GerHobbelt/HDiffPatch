@@ -689,8 +689,8 @@ static void serialize_diff(const TDiffData& diff,const TInputCovers& covers,std:
             check(typeLen<=hpatch_kMaxPluginTypeLength);
             check(0==strchr(type,'&'));
         }
-    static void _outType(std::vector<TByte>& out_data,const hdiff_TCompress* compressPlugin,
-                         const char* versionType,const hpatch_TChecksum* checksumPlugin=0){
+    static const TByte _cstrEndTag='\0';//c string end tag
+    static void _outType(std::vector<TByte>& out_data,const hdiff_TCompress* compressPlugin,const char* versionType){
         //type version
         pushCStr(out_data,versionType);
         pushCStr(out_data,"&");
@@ -699,14 +699,7 @@ static void serialize_diff(const TDiffData& diff,const TInputCovers& covers,std:
             _check_type(compressType);
             pushCStr(out_data,compressType);
         }
-        if (checksumPlugin){//checksumType
-            pushCStr(out_data,"&"); //placed here for compatibility 
-            const char* checksumType=checksumPlugin->checksumType();
-            _check_type(checksumType);
-            pushCStr(out_data,checksumType);
-        }
-        const TByte _cstrEndTag='\0';//c string end tag
-        pushBack(out_data,&_cstrEndTag,(&_cstrEndTag)+1);
+        out_data.push_back(_cstrEndTag);
     }
     
 
@@ -1141,6 +1134,59 @@ void create_window_diff(const hpatch_TStreamInput* newData,const hpatch_TStreamI
 }
 
 
+    struct TWindowCheckImport{
+        hpatch_TDecompress* decompressPlugin;
+        hpatch_TChecksum*   checksumPlugin;
+    };
+
+static hpatch_BOOL _check_window_onDiffInfo(struct winpatch_listener_t* listener,
+                                            const hpatch_windowDiffInfo* info,
+                                            hpatch_TDecompress** out_decompressPlugin,
+                                            hpatch_TChecksum** out_checksumPlugin,
+                                            hpatch_BOOL* isCheckSumNew,hpatch_BOOL* isCheckSumOld,hpatch_BOOL* isCheckSumDiff,
+                                            unsigned char** out_temp_cache,
+                                            unsigned char** out_temp_cacheEnd){
+    TWindowCheckImport* import=(TWindowCheckImport*)listener->import;
+    *out_decompressPlugin=(info->compressType[0]=='\0')?0:import->decompressPlugin;
+    *out_checksumPlugin=(info->checksumByteSize>0)?import->checksumPlugin:0;
+    *isCheckSumNew=(*out_checksumPlugin!=0);
+    *isCheckSumOld=(*out_checksumPlugin!=0);
+    *isCheckSumDiff=(*out_checksumPlugin!=0);
+    size_t memSize=(size_t)(info->maxWindowOldSize+info->maxStepMemSize)+hdiff_kFileIOBufBestSize*16;
+    *out_temp_cache=(unsigned char*)malloc(memSize);
+    *out_temp_cacheEnd=(*out_temp_cache)+memSize;
+    return (*out_temp_cache!=0);
+}
+
+static void _check_window_onPatchFinish(struct winpatch_listener_t* listener,
+                                         unsigned char* temp_cache, unsigned char* temp_cacheEnd){
+    if (temp_cache) free(temp_cache);
+}
+
+enum TWindowPatchResult check_window_diff(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
+                                          const hpatch_TStreamInput* diffData,hpatch_TDecompress* decompressPlugin,
+                                          hpatch_TChecksum* checksumPlugin,size_t threadNum){
+    TWindowCheckImport import;
+    import.decompressPlugin=decompressPlugin;
+    import.checksumPlugin=checksumPlugin;
+
+    winpatch_listener_t listener;
+    memset(&listener,0,sizeof(listener));
+    listener.import=&import;
+    listener.onDiffInfo=_check_window_onDiffInfo;
+    listener.onPatchFinish=_check_window_onPatchFinish;
+
+    const size_t kACacheBufSize=hdiff_kFileIOBufBestSize;
+    TAutoMem _cache(kACacheBufSize*1);
+    _TCheckOutNewDataStream out_newData(newData,_cache.data(),kACacheBufSize);
+
+    enum TWindowPatchResult result=patch_window_diff(&listener,&out_newData,oldData,diffData,0,threadNum);
+    if (result==kWindowPatch_ok)
+        check(out_newData.isWriteFinish());
+    return result;
+}
+
+
 bool check_diff(const TByte* newData,const TByte* newData_end,
                 const TByte* oldData,const TByte* oldData_end,
                 const TByte* diff,const TByte* diff_end){
@@ -1218,7 +1264,7 @@ bool check_single_compressed_diff(const hpatch_TStreamInput* newData,
                                                 hpatch_TDecompress** out_decompressPlugin,
                                                 unsigned char** out_temp_cache,
                                                 unsigned char** out_temp_cacheEnd){
-        size_t memSize=(size_t)(info->stepMemSize+hdiff_kFileIOBufBestSize*(1+16));
+        size_t memSize=(size_t)(info->stepMemSize+hdiff_kFileIOBufBestSize*16);
         *out_temp_cache=(unsigned char*)malloc(memSize);
         *out_temp_cacheEnd=(*out_temp_cache)+memSize;   
         *out_decompressPlugin=(info->compressType[0]=='\0')?0:(hpatch_TDecompress*)listener->import;
@@ -1238,7 +1284,7 @@ bool check_single_compressed_diff(const hpatch_TStreamInput* newData,
     listener.onPatchFinish=_check_single_onPatchFinish;
         
     const size_t kACacheBufSize=hdiff_kFileIOBufBestSize;
-    TAutoMem _cache(kACacheBufSize*(1+16));
+    TAutoMem _cache(kACacheBufSize*1);
     _TCheckOutNewDataStream out_newData(newData,_cache.data(),kACacheBufSize);
 
     _test_rt(patch_single_stream(&listener,&out_newData,oldData,diff,0,0,threadNum));
@@ -1991,6 +2037,14 @@ void get_match_covers_by_window(const hpatch_TStreamInput* newData,const hpatch_
                                 isUseBigCacheMatch,mtsets,isExtendCover);
 }
 
+    static void _ensure_default_window(std::vector<hpatch_TWindow>& windows,hpatch_StreamPos_t newDataSize){
+        if (windows.empty()&&(newDataSize>0)){
+            hpatch_TWindow defWin; memset(&defWin,0,sizeof(defWin));
+            defWin.newLength=newDataSize;
+            windows.push_back(defWin);
+        }
+    }
+
 void get_match_covers_and_window(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
                                  size_t kNewWindowSize,size_t kOldWindowSize,size_t kSegSize,bool isCollateMergeCover,
                                  std::vector<TCover>& out_covers,std::vector<hpatch_TWindow>& out_windows,
@@ -2068,6 +2122,7 @@ void get_match_covers_and_window(const hpatch_TStreamInput* newData,const hpatch
                 windows[insertWi++] = windows[i];
         }
         windows.resize(insertWi);
+        _ensure_default_window(windows,newData->streamSize);
         if (windows.size() > 1)
             collate_covers(out_covers,isCollateMergeCover);
     } else
@@ -2086,6 +2141,7 @@ void get_match_covers_and_window(const hpatch_TStreamInput* newData,const hpatch
             }
         }
         windows.resize(insertWi);
+        _ensure_default_window(windows,newData->streamSize);
         if (windows.size() > 1)
             collate_covers(out_covers,isCollateMergeCover);
     }
@@ -2157,6 +2213,7 @@ void serialize_window_diff(const hpatch_TStreamInput* newStream,const hpatch_TSt
     }
 
     const hpatch_size_t checksumByteSize=checksumPlugin?checksumPlugin->checksumByteSize():0;
+    if (checksumPlugin) check(checksumByteSize>0);
     std::vector<hpatch_byte> tempChecksumBuf(checksumByteSize,0);
 
     //checksum wrapper
@@ -2170,36 +2227,47 @@ void serialize_window_diff(const hpatch_TStreamInput* newStream,const hpatch_TSt
         checksumNewHandle=checksumPlugin->open(checksumPlugin);
         check(checksumNewHandle);
         checksumPlugin->begin(checksumNewHandle);
-        checksumInNew.init(newStream,checksumPlugin,checksumNewHandle);
-        checksumInNew.setIsChecksuming(false); //now not checksum
+        checksumInNew.init(newStream,checksumPlugin,checksumNewHandle,false);
 
         checksumOldHandle=checksumPlugin->open(checksumPlugin);
         check(checksumOldHandle);
         checksumPlugin->begin(checksumOldHandle);
-        checksumInOld.init(oldStream,checksumPlugin,checksumOldHandle);
-        checksumInOld.setIsChecksuming(false); //now not checksum
+        checksumInOld.init(oldStream,checksumPlugin,checksumOldHandle,false);
         checksumInOld.setIsRandomAccess(true);
 
         checksumDiffHandle=checksumPlugin->open(checksumPlugin);
         check(checksumDiffHandle);
         checksumPlugin->begin(checksumDiffHandle);
-        checksumOutDiff.init(out_diff,checksumPlugin,checksumDiffHandle);
-        checksumOutDiff.setIsChecksuming(false); //now not checksum
+        checksumOutDiff.init(out_diff,checksumPlugin,checksumDiffHandle,false);
     }
 
     //create window diff data stream (init pass: compute sizes & stats)
+    const size_t windowMetaCount=hpatch_kMaxWindowMetaCount; //2^N, >=2 & <= hpatch_kMaxWindowMetaCount
     size_t maxStepMemSize=0;
     size_t maxSubCoverCount=0;
-    hpatch_StreamPos_t maxWindowOldLength=0;
+    hpatch_StreamPos_t maxWindowOldSize=0;
+    const TByte* extraData=0;  //extraData while be compress
+    const size_t extraDataSize=0;
     TWindowDiffStream windowDiffStream((checksumByteSize>0)?&checksumInNew:newStream,
                                        (checksumByteSize>0)?&checksumInOld:oldStream,
                                        covers,windows,patchStepMemSize,isExtendCover,
-                                       maxStepMemSize,maxSubCoverCount,maxWindowOldLength);
+                                       maxStepMemSize,maxSubCoverCount,maxWindowOldSize,
+                                       windowMetaCount,extraData,extraDataSize);
 
     TDiffStream outDiff((checksumByteSize>0)?&checksumOutDiff:out_diff);
+    TPlaceholder headSize_ph(0,0);
     {//type
         std::vector<TByte> out_type;
-        _outType(out_type,compressPlugin,kHDiffWindowVersionType,checksumPlugin);
+        pushCStr(out_type,kHDiffWindowVersionType);
+        headSize_ph.pos=outDiff.getWritedPos()+out_type.size();
+        headSize_ph.pos_end=headSize_ph.pos+2;
+        out_type.push_back(0); out_type.push_back(0); // need update head remaining size
+        if (compressPlugin)
+            pushCStr(out_type,compressPlugin->compressType());
+        out_type.push_back('&');
+        if (checksumPlugin)
+            pushCStr(out_type,checksumPlugin->checksumType());
+        out_type.push_back(_cstrEndTag);
         outDiff.pushBack(out_type.data(),out_type.size());
     }
     //head
@@ -2207,13 +2275,17 @@ void serialize_window_diff(const hpatch_TStreamInput* newStream,const hpatch_TSt
     outDiff.packUInt(oldStream->streamSize);
     outDiff.packUInt(covers.size());
     outDiff.packUInt(windows.size());
+    outDiff.packUInt(windowMetaCount);
     outDiff.packUInt(maxStepMemSize);
     outDiff.packUInt(maxSubCoverCount);
-    outDiff.packUInt(maxWindowOldLength);
-    outDiff.packUInt(windowDiffStream.streamSize);
-    TPlaceholder compressedWindowDataSize_ph=outDiff.packUInt_pos(
-                                                        compressPlugin?windowDiffStream.streamSize:0);
+    outDiff.packUInt(maxWindowOldSize);
     outDiff.packUInt(checksumByteSize);
+    outDiff.packUInt(extraDataSize);
+    outDiff.packUInt(windowDiffStream.streamSize);
+    TPlaceholder compressedSize_ph=outDiff.packUInt_pos(compressPlugin?windowDiffStream.streamSize:0);
+
+    // if need to add other info in head, add it here
+
     TPlaceholder checksumOld_ph(0,0);
     TPlaceholder checksumNew_ph(0,0);
     TPlaceholder checksumDiff_ph(0,0);
@@ -2221,13 +2293,27 @@ void serialize_window_diff(const hpatch_TStreamInput* newStream,const hpatch_TSt
         checksumOld_ph=outDiff.pushBack_pos(tempChecksumBuf.data(),checksumByteSize);
         checksumNew_ph=outDiff.pushBack_pos(tempChecksumBuf.data(),checksumByteSize);
         checksumDiff_ph=outDiff.pushBack_pos(tempChecksumBuf.data(),checksumByteSize);
+        checksumOutDiff.setAutoChecksumBeginPos(outDiff.getWritedPos());
+    }
+    {//update 2-byte head remaining size
+        hpatch_StreamPos_t headRemainingSize=outDiff.getWritedPos()-headSize_ph.pos_end;
+        check(headRemainingSize+strlen(kHDiffWindowVersionType)+2<=hpatch_kWindowDiffHeadMaxSize);
+        check(headRemainingSize<(1<<16));
+        hpatch_byte _le16[2]={headRemainingSize&0xFF,(headRemainingSize>>8)&0xFF};
+        outDiff.stream_update(headSize_ph,_le16);
+    }
+    if (checksumByteSize>0){
         checksumOutDiff.setIsChecksuming(true); //start checksum diff data
         checksumInOld.setIsChecksuming(true);
         checksumInNew.setIsChecksuming(true);
     }
 
     //push compressed window data stream
-    outDiff.pushStream(&windowDiffStream,compressPlugin,compressedWindowDataSize_ph);
+    hpatch_StreamPos_t wrtitedWindowDataSize=outDiff.pushStream(&windowDiffStream,compressPlugin);
+    if (checksumByteSize>0)
+        checksumOutDiff.setIsChecksuming(false);
+    if (compressPlugin)
+        outDiff.packUInt_update(compressedSize_ph,wrtitedWindowDataSize);
 
     if (checksumByteSize>0){
         {//checksumOld: finalize
@@ -2242,8 +2328,7 @@ void serialize_window_diff(const hpatch_TStreamInput* newStream,const hpatch_TSt
             checksumNewHandle=0;
             outDiff.stream_update(checksumNew_ph,tempChecksumBuf.data());
         }
-        {//checksumDiff: finalize
-            checksumOutDiff.setIsChecksuming(false);
+        {//checksumDiff: finalize +checksum head
             std::vector<hpatch_byte> tempBuf(checksumDiff_ph.pos);
             checki(out_diff->read_writed!=0,"serialize_window_diff() out_diff can't read error!");
             check(out_diff->read_writed(out_diff,0,tempBuf.data(),tempBuf.data()+tempBuf.size()));
@@ -2254,5 +2339,120 @@ void serialize_window_diff(const hpatch_TStreamInput* newStream,const hpatch_TSt
             outDiff.stream_update(checksumDiff_ph,tempChecksumBuf.data());
         }
     }
+}
+
+hpatch_StreamPos_t resave_window_diff(const hpatch_TStreamInput*  in_diff,
+                                      hpatch_TDecompress*         decompressPlugin,
+                                      const hpatch_TStreamOutput* out_diff,
+                                      const hdiff_TCompress*      compressPlugin,
+                                      hpatch_TChecksum*           checksumPlugin,
+                                      const hpatch_windowDiffInfo* diffInfo,
+                                      hpatch_StreamPos_t          in_diff_curPos,
+                                      hpatch_StreamPos_t          out_diff_curPos){
+    hpatch_windowDiffInfo _diffInfo;
+    if (diffInfo==0){
+        checki(getWindowDiffInfo(&_diffInfo,in_diff,in_diff_curPos),
+            "getWindowDiffInfo() error!");
+        diffInfo=&_diffInfo;
+    }
+
+    const bool isCompressed=(diffInfo->compressedSize>0);
+    if (isCompressed){ //check
+        checki(diffInfo->compressedSize+(in_diff_curPos+diffInfo->windowDataPos)==in_diff->streamSize,
+               "resave_window_diff() diffInfo error!");
+        checki((decompressPlugin!=0)&&(decompressPlugin->is_can_open(diffInfo->compressType)),
+               "resave_window_diff() decompressPlugin error!");
+    }
+    const char* compressType=compressPlugin?compressPlugin->compressType():"";
+
+    const hpatch_size_t checksumByteSize=diffInfo->checksumByteSize;
+    if (checksumByteSize>0){//check
+        checki((checksumPlugin!=0)&&(checksumPlugin->checksumByteSize()==checksumByteSize)
+             &&(0==strcmp(checksumPlugin->checksumType(),diffInfo->checksumType)),
+               "resave_window_diff() checksumPlugin error!");
+    }else{
+        checksumPlugin=0;
+    }
+
+    std::vector<hpatch_byte> tempChecksumBuf(checksumByteSize,0);
+    //checksum wrapper
+    hpatch_checksumHandle checksumDiffHandle=0;
+    TChecksumOutputStream checksumOutDiff;
+    if (checksumByteSize>0){
+        checksumDiffHandle=checksumPlugin->open(checksumPlugin);
+        check(checksumDiffHandle);
+        checksumPlugin->begin(checksumDiffHandle);
+        checksumOutDiff.init(out_diff,checksumPlugin,checksumDiffHandle,false,out_diff_curPos);
+    }
+
+    TDiffStream outDiff((checksumByteSize>0)?&checksumOutDiff:out_diff,(checksumByteSize>0)?0:out_diff_curPos);
+    TPlaceholder headSize_ph(0,0);
+    {//type
+        std::vector<TByte> out_type;
+        pushCStr(out_type,kHDiffWindowVersionType);
+        headSize_ph.pos=outDiff.getWritedPos()+out_type.size();
+        headSize_ph.pos_end=headSize_ph.pos+2;
+        out_type.push_back(0); out_type.push_back(0); // need update head remaining size
+        if (compressPlugin)
+            pushCStr(out_type,compressPlugin->compressType());
+        out_type.push_back('&');
+        if (checksumPlugin)
+            pushCStr(out_type,checksumPlugin->checksumType());
+        out_type.push_back(_cstrEndTag);
+        outDiff.pushBack(out_type.data(),out_type.size());
+    }
+    //head
+    outDiff.packUInt(diffInfo->newDataSize);
+    outDiff.packUInt(diffInfo->oldDataSize);
+    outDiff.packUInt(diffInfo->coverCount);
+    outDiff.packUInt(diffInfo->windowCount);
+    outDiff.packUInt(diffInfo->maxStepMemSize);
+    outDiff.packUInt(diffInfo->maxSubCoverCount);
+    outDiff.packUInt(diffInfo->maxWindowOldSize);
+    outDiff.packUInt(checksumByteSize);
+    outDiff.packUInt(diffInfo->extraDataSize);
+    outDiff.packUInt(diffInfo->uncompressedSize);
+    TPlaceholder compressedSize_ph=outDiff.packUInt_pos(compressPlugin?diffInfo->uncompressedSize:0);
+
+    TStreamClip hclip(in_diff,in_diff_curPos+diffInfo->otherInfoPos,
+                      in_diff_curPos+diffInfo->windowDataPos-checksumByteSize);
+    outDiff.pushStream(&hclip);
+
+    TPlaceholder checksumDiff_ph(0,0);
+    if (checksumByteSize>0){
+        checksumDiff_ph=outDiff.pushBack_pos(tempChecksumBuf.data(),checksumByteSize);
+        checksumOutDiff.setAutoChecksumBeginPos(outDiff.getWritedPos());
+    }
+    {//update 2-byte head remaining size
+        hpatch_StreamPos_t headRemainingSize=outDiff.getWritedPos()-headSize_ph.pos_end;
+        check(headRemainingSize+strlen(kHDiffWindowVersionType)+2<=hpatch_kWindowDiffHeadMaxSize);
+        check(headRemainingSize<(1<<16));
+        hpatch_byte _le16[2]={headRemainingSize&0xFF,(headRemainingSize>>8)&0xFF};
+        outDiff.stream_update(headSize_ph,_le16);
+    }
+    if (checksumByteSize>0)
+        checksumOutDiff.setIsChecksuming(true); //start checksum diff data
+
+    // decompress + recompress window data
+    TStreamClip wclip(in_diff,in_diff_curPos+diffInfo->windowDataPos,in_diff->streamSize,
+                      isCompressed?decompressPlugin:0,diffInfo->uncompressedSize);
+    hpatch_StreamPos_t wrtitedWindowDataSize=outDiff.pushStream(&wclip,compressPlugin);
+    if (checksumByteSize>0)
+        checksumOutDiff.setIsChecksuming(false);
+    if (compressPlugin)
+        outDiff.packUInt_update(compressedSize_ph,wrtitedWindowDataSize);
+
+    if (checksumByteSize>0){//checksumDiff: finalize +checksum head
+        std::vector<hpatch_byte> tempBuf(checksumDiff_ph.pos);
+        checki(out_diff->read_writed!=0,"resave_window_diff() out_diff can't read error!");
+        check(out_diff->read_writed(out_diff,0,tempBuf.data(),tempBuf.data()+tempBuf.size()));
+        checksumPlugin->append(checksumDiffHandle,tempBuf.data(),tempBuf.data()+tempBuf.size());//checksum head
+        checksumPlugin->end(checksumDiffHandle,tempChecksumBuf.data(),tempChecksumBuf.data()+checksumByteSize);
+        checksumPlugin->close(checksumPlugin,checksumDiffHandle);
+        checksumDiffHandle=0;
+        outDiff.stream_update(checksumDiff_ph,tempChecksumBuf.data());
+    }
+
+	return outDiff.getWritedPos();
 }
 
