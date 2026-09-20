@@ -30,6 +30,7 @@
 #define HDiff_diff_h
 #include <vector>
 #include "diff_types.h"
+#include "../HPatch/checksum_plugin.h"
 
 static const int kMinSingleMatchScore_default = 4;
 
@@ -93,6 +94,27 @@ void create_compressed_diff_stream(const hpatch_TStreamInput*  newData,
                                    size_t kMatchBlockSize=kMatchBlockSize_default,
                                    const hdiff_TMTSets_s* mtsets=0);
 
+
+static const size_t kDefaultFastMatchBlockSize = 1024*1;
+
+static const size_t kMatchWindowsBlockSize_default = (1<<6);
+static const size_t kDefaultBigCoverSize = 1024*16;
+static const size_t kDefaultWindowOldSize = 1024*512;
+
+//create a compressed diff data by window mode:
+//  optimize the access speed of old data when patch
+//  kOldWindowSize: max window bytes on old data;
+//  kSegSize: initial data granularity in a window matching, DEFAULT kOldWindowSize/16;
+//  throw std::runtime_error when I/O error or kSegSize too large,etc.
+void create_compressed_diff_window(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
+                                   const hpatch_TStreamOutput* out_diff,
+                                   const hdiff_TCompress* compressPlugin=0,
+                                   size_t kOldWindowSize=kDefaultWindowOldSize,size_t kSegSize=0,
+                                   size_t kBigCoverSize=kDefaultBigCoverSize,size_t kMatchBlockSize=kMatchWindowsBlockSize_default,
+                                   size_t fastMatchBlockSize=kDefaultFastMatchBlockSize,
+                                   int kMinSingleMatchScore=kMinSingleMatchScore_default,bool isUseBigCacheMatch=false,
+                                   const hdiff_TMTSets_s* mtsets=0,bool isExtendCover=true);
+
 //return patch_decompress(oldData+diff)==newData?
 bool check_compressed_diff(const unsigned char* newData,const unsigned char* newData_end,
                            const unsigned char* oldData,const unsigned char* oldData_end,
@@ -149,6 +171,21 @@ void create_single_compressed_diff_stream(const hpatch_TStreamInput*  newData,
                                           size_t kMatchBlockSize=kMatchBlockSize_default,
                                           const hdiff_TMTSets_s* mtsets=0);
 
+//create single compressed diff data by window mode:
+//  optimize the access speed of old data when patch
+//  kOldWindowSize: max window bytes on old data;
+//  kSegSize: initial data granularity during window matching, DEFAULT kOldWindowSize/16;
+//  throw std::runtime_error when I/O error or kSegSize too large,etc.
+void create_single_compressed_diff_window(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
+                                          const hpatch_TStreamOutput* out_diff,
+                                          const hdiff_TCompress* compressPlugin=0,
+                                          size_t patchStepMemSize=kDefaultPatchStepMemSize,
+                                          size_t kOldWindowSize=kDefaultWindowOldSize,size_t kSegSize=0,
+                                          size_t kBigCoverSize=kDefaultBigCoverSize,size_t kMatchBlockSize=kMatchWindowsBlockSize_default,
+                                          size_t fastMatchBlockSize=kDefaultFastMatchBlockSize,
+                                          int kMinSingleMatchScore=kMinSingleMatchScore_default,bool isUseBigCacheMatch=false,
+                                          const hdiff_TMTSets_s* mtsets=0,bool isExtendCover=true);
+
 //return patch_single_?(oldData+diff)==newData?
 bool check_single_compressed_diff(const unsigned char* newData,const unsigned char* newData_end,
                                   const unsigned char* oldData,const unsigned char* oldData_end,
@@ -177,7 +214,6 @@ hpatch_StreamPos_t
 //   get_match_covers_by_stream() got big covers + get_match_covers_by_sstring() got small covers
 //   if (fastMatchBlockSize==0), not used get_match_covers_by_stream()
 //see create_compressed_diff | create_single_compressed_diff
-static const size_t kDefaultFastMatchBlockSize = 1024*1;
 void create_compressed_diff_block(const hpatch_TStreamInput* newData,//will load needed in memory
                                   const hpatch_TStreamInput* oldData,//will load needed in memory
                                   const hpatch_TStreamOutput* out_diff,
@@ -223,6 +259,17 @@ void create_single_compressed_diff_block(unsigned char* newData,unsigned char* n
                                          int kMinSingleMatchScore=kMinSingleMatchScore_default,
                                          bool isUseBigCacheMatch=false,size_t threadNum=1);
 
+                                         
+void create_window_diff(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
+                        const hpatch_TStreamOutput* out_diff,
+                        const hdiff_TCompress* compressPlugin,hpatch_TChecksum* checksumPlugin,
+                        size_t patchStepMemSize=kDefaultPatchStepMemSize,
+                        size_t kOldWindowSize=kDefaultWindowOldSize,size_t kSegSize=0,
+                        size_t kBigCoverSize=kDefaultBigCoverSize,size_t kMatchBlockSize=kMatchWindowsBlockSize_default,
+                        size_t fastMatchBlockSize=kDefaultFastMatchBlockSize,
+                        int kMinSingleMatchScore=kMinSingleMatchScore_default,bool isUseBigCacheMatch=false,
+                        const hdiff_TMTSets_s* mtsets=0,bool isExtendCover=true);
+
 
 //same as create?compressed_diff_stream(), but not serialize diffData, only got covers
 //  now isExtendCover always false,so not need pass isExtendCover
@@ -255,21 +302,29 @@ void get_match_covers_by_stream_and_sstring(unsigned char* newData,unsigned char
                                             size_t threadNum=1,bool isExtendCover=true);
 
 
-static const size_t kMatchWindowsBlockSize_default = (1<<5);
-static const size_t kDefaultBigCoverSize = 1024*8;
-
 //same as create?compressed_diff_window(), but not serialize diffData, only got covers
-//  get_match_windows() + loop get_match_covers_in_a_window()
+// (get_match_covers_by_stream() or get_match_covers_by_sstring()) + get_match_windows_from_baseCovers() + loop get_match_covers_in_a_window()
+// if (kMatchBlockSize!=0) get_match_covers_by_stream(out baseCovers) else get_match_covers_by_sstring(out baseCovers);
+// throw std::runtime_error when I/O error or kSegSize too large,etc.
 void get_match_covers_by_window(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
-                                size_t kNewWindowSize,size_t kOldWindowSize,std::vector<TCover>& out_covers,
+                                size_t kNewWindowSize,size_t kOldWindowSize,size_t kSegSize,std::vector<TCover>& out_covers,
                                 size_t kBigCoverSize=kDefaultBigCoverSize,size_t kMatchBlockSize=kMatchWindowsBlockSize_default,
+                                size_t fastMatchBlockSize=kDefaultFastMatchBlockSize,
                                 int kMinSingleMatchScore=kMinSingleMatchScore_default,bool isUseBigCacheMatch=false,
                                 const hdiff_TMTSets_s* mtsets=0,bool isExtendCover=true);
 
-void get_match_windows(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
-                       size_t kNewWindowSize,size_t kOldWindowSize,std::vector<hpatch_TWindow>& out_windows,
-                       std::vector<std::vector<TCover> >& out_bigCoverss,size_t kBigCoverSize=kDefaultBigCoverSize,
-                       size_t kMatchBlockSize=kMatchWindowsBlockSize_default,const hdiff_TMTSets_s* mtsets=0);
+void get_match_covers_and_window(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
+                                 size_t kNewWindowSize,size_t kOldWindowSize,size_t kSegSize,bool isCollateMergeCover,
+                                 std::vector<TCover>& out_covers,std::vector<hpatch_TWindow>& out_windows,
+                                 size_t kBigCoverSize=kDefaultBigCoverSize,size_t kMatchBlockSize=kMatchWindowsBlockSize_default,
+                                 size_t fastMatchBlockSize=kDefaultFastMatchBlockSize,
+                                 int kMinSingleMatchScore=kMinSingleMatchScore_default,bool isUseBigCacheMatch=false,
+                                 const hdiff_TMTSets_s* mtsets=0,bool isExtendCover=true);
+
+void get_match_windows_from_baseCovers(hpatch_StreamPos_t newSize,hpatch_StreamPos_t oldSize,
+                                       size_t kNewWindowSize,size_t kOldWindowSize,size_t kSegSize,//if (kSegSize==0) kSegSize=kOldWindowSize/16;
+                                       std::vector<TCover>& baseCovers,std::vector<hpatch_TWindow>& out_windows,
+                                       std::vector<std::vector<TCover> >& out_bigCoverss,size_t kBigCoverSize);
 void get_match_covers_in_a_window(const hpatch_TStreamInput* newData,const hpatch_TStreamInput* oldData,
                                   hpatch_TWindow& window,const std::vector<TCover>& bigCovers,
                                   std::vector<TCover>& out_covers,int kMinSingleMatchScore=kMinSingleMatchScore_default,
@@ -284,5 +339,9 @@ void serialize_compressed_diff(const hpatch_TStreamInput* newData,const hpatch_T
 void serialize_single_compressed_diff(const hpatch_TStreamInput* newStream,const hpatch_TStreamInput* oldStream,
                                       const TInputCovers& covers,const hpatch_TStreamOutput* out_diff,
                                       const hdiff_TCompress* compressPlugin,size_t patchStepMemSize,bool isExtendCover);
+void serialize_window_diff(const hpatch_TStreamInput* newStream,const hpatch_TStreamInput* oldStream,
+                           const TInputCovers& covers,const std::vector<hpatch_TWindow>& windows,
+                           const hpatch_TStreamOutput* out_diff,const hdiff_TCompress* compressPlugin,
+                           hpatch_TChecksum* checksumPlugin,size_t patchStepMemSize,bool isExtendCover);
 
 #endif
